@@ -1,2 +1,17 @@
-idf_component_register(SRCS "main.c"
-                    INCLUDE_DIRS ".")
+idf_component_register(
+    SRCS 
+        "main.c"
+        "Business_Logic/system_state.c"
+        "Networking_Services/mqtt_client.c"
+        "Networking_Services/tg_bot.c"
+        "Networking_Services/wifi_app.c"
+        "Peripheral/coin_acceptor.c"
+        "Peripheral/display_7seg.c"
+        "Peripheral/display_lcd.c"
+        "Peripheral/encoder.c"
+    INCLUDE_DIRS 
+        "."
+        "Business_Logic"
+        "Networking_Services"
+        "Peripheral"
+)
