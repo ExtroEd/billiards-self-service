@@ -5,7 +5,7 @@
 #include "esp_log.h"
 
 #include "coin_acceptor.h"
-// #include "system_state.h"
+#include "system_state.h"
 #include "Peripheral/encoder.h"
 #include "Peripheral/display_tft.h"
 
@@ -27,7 +27,7 @@ void app_main(void) {
     system_state_init();
     coin_acceptor_init(coin_events_queue);
     encoder_init(encoder_events_queue);
-    display_tft_init(); // Включит подсветку
+    display_tft_init(); // Инициализация ST7735 и включение подсветки
 
     ESP_LOGI(TAG, "Готово к тестированию. Покрути или нажми энкодер!");
 
@@ -35,14 +35,20 @@ void app_main(void) {
     encoder_event_t enc_event;
 
     while (1) {
-        // Проверка монетоприемника
+        // 1. Проверка монетоприемника
         if (xQueueReceive(coin_events_queue, &received_pulses, 0) == pdTRUE) {
             ESP_LOGI(TAG, "Монетоприемник: %d импульсов", received_pulses);
             system_state_add_pulses(received_pulses);
+            
+            // Будим дисплей при внесении оплаты
+            display_tft_wake();
         }
 
-        // Проверка энкодера
+        // 2. Проверка энкодера и передача событий в меню дисплея
         if (xQueueReceive(encoder_events_queue, &enc_event, 0) == pdTRUE) {
+            // Передаём событие энкодера напрямую в логику меню/дисплея
+            menu_process_event(enc_event);
+
             switch (enc_event) {
                 case ENCODER_EVENT_UP:
                     ESP_LOGI(TAG, ">>> Энкодер: ВРАЩЕНИЕ ВВЕРХ (По часовой) <<<");
