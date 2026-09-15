@@ -7,7 +7,7 @@ idf_component_register(
         "Networking_Services/wifi_app.c"
         "Peripheral/coin_acceptor.c"
         "Peripheral/display_7seg.c"
-        "Peripheral/display_lcd.c"
+        "Peripheral/display_tft.c"
         "Peripheral/encoder.c"
     INCLUDE_DIRS 
         "."
