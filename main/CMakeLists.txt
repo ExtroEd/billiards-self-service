@@ -14,4 +14,13 @@ idf_component_register(
         "Business_Logic"
         "Networking_Services"
         "Peripheral"
+    REQUIRES 
+        esp_wifi 
+        esp_event 
+        esp_timer
+        esp_http_server 
+        esp_driver_gpio
+        esp_driver_spi
+        nvs_flash 
+        driver
 )
