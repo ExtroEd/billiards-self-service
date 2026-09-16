@@ -9,24 +9,23 @@
 static const char *TAG = "DISPLAY_TFT";
 static spi_device_handle_t s_spi_dev = NULL;
 
-// Состояние дисплея и таймаут автовыключения (15 секунд)
 static bool s_is_awake = true;
 static int64_t s_last_activity_time = 0;
-#define SLEEP_TIMEOUT_US (15 * 1000 * 1000)
+#define SLEEP_TIMEOUT_US (15 * 1000 * 1000LL) // 15 секунд
 
-// Смещение для фиксации сдвига изображения ST7735 (128x160)
 #define ST7735_OFFSET_X  2
 #define ST7735_OFFSET_Y  1
 
-// Состояния меню
 typedef enum {
-    UI_STATE_MAIN_SCREEN, // Главный экран
-    UI_STATE_MENU_NAV,    // Навигация по меню
-    UI_STATE_MENU_EDIT    // Редактирование параметра
+    UI_STATE_MAIN_SCREEN,
+    UI_STATE_MENU_NAV,   
+    UI_STATE_MENU_EDIT   
 } ui_state_t;
 
 static ui_state_t s_ui_state = UI_STATE_MAIN_SCREEN;
 static int8_t s_selected_item = 0;
+
+static void render_menu(void);
 
 #define MENU_ITEMS_COUNT 6
 static const char *MENU_LABELS[MENU_ITEMS_COUNT] = {
@@ -38,7 +37,6 @@ static const char *MENU_LABELS[MENU_ITEMS_COUNT] = {
     "6.Сохранить"
 };
 
-// Используем определение из display_tft.h
 static device_config_t s_config = {
     .min_start_sum = 30,
     .price_per_10min = 30,
@@ -47,67 +45,74 @@ static device_config_t s_config = {
     .remaining_time_s = 0
 };
 
-// Стандартный шрифт ASCII 5x7
+// Шрифт 5x7: ASCII (0..32) + Кириллица А-Я (33..65)
 static const uint8_t font5x7[][5] = {
-    {0x00, 0x00, 0x00, 0x00, 0x00}, // Space
-    {0x00, 0x00, 0x5F, 0x00, 0x00}, // !
-    {0x00, 0x07, 0x00, 0x07, 0x00}, // "
-    {0x14, 0x7F, 0x14, 0x7F, 0x14}, // #
-    {0x24, 0x2A, 0x7F, 0x2A, 0x12}, // $
-    {0x23, 0x13, 0x08, 0x64, 0x62}, // %
-    {0x36, 0x49, 0x55, 0x22, 0x50}, // &
-    {0x00, 0x05, 0x03, 0x00, 0x00}, // '
-    {0x00, 0x1C, 0x22, 0x41, 0x00}, // (
-    {0x00, 0x41, 0x22, 0x1C, 0x00}, // )
-    {0x14, 0x08, 0x3E, 0x08, 0x14}, // *
-    {0x08, 0x08, 0x3E, 0x08, 0x08}, // +
-    {0x00, 0x50, 0x30, 0x00, 0x00}, // ,
-    {0x08, 0x08, 0x08, 0x08, 0x08}, // -
-    {0x00, 0x60, 0x60, 0x00, 0x00}, // .
-    {0x20, 0x10, 0x08, 0x04, 0x02}, // /
-    {0x3E, 0x51, 0x49, 0x45, 0x3E}, // 0
-    {0x00, 0x42, 0x7F, 0x40, 0x00}, // 1
-    {0x42, 0x61, 0x51, 0x49, 0x46}, // 2
-    {0x21, 0x41, 0x45, 0x4B, 0x31}, // 3
-    {0x18, 0x14, 0x12, 0x7F, 0x10}, // 4
-    {0x27, 0x45, 0x45, 0x45, 0x39}, // 5
-    {0x3C, 0x4A, 0x49, 0x49, 0x30}, // 6
-    {0x01, 0x71, 0x09, 0x05, 0x03}, // 7
-    {0x36, 0x49, 0x49, 0x49, 0x36}, // 8
-    {0x06, 0x49, 0x49, 0x29, 0x1E}, // 9
-    {0x00, 0x36, 0x36, 0x00, 0x00}, // :
-    {0x00, 0x56, 0x36, 0x00, 0x00}, // ;
-    {0x08, 0x14, 0x22, 0x41, 0x00}, // <
-    {0x14, 0x14, 0x14, 0x14, 0x14}, // =
-    {0x00, 0x41, 0x22, 0x14, 0x08}, // >
-    {0x02, 0x01, 0x51, 0x09, 0x06}, // ?
-    {0x32, 0x49, 0x79, 0x41, 0x3E}, // @
-    {0x7E, 0x11, 0x11, 0x11, 0x7E}, // A
-    {0x7F, 0x49, 0x49, 0x49, 0x36}, // B
-    {0x3E, 0x41, 0x41, 0x41, 0x22}, // C
-    {0x7F, 0x41, 0x41, 0x22, 0x1C}, // D
-    {0x7F, 0x49, 0x49, 0x49, 0x41}, // E
-    {0x7F, 0x09, 0x09, 0x09, 0x01}, // F
-    {0x3E, 0x41, 0x49, 0x49, 0x7A}, // G
-    {0x7F, 0x08, 0x08, 0x08, 0x7F}, // H
-    {0x00, 0x41, 0x7F, 0x41, 0x00}, // I
-    {0x20, 0x40, 0x41, 0x3F, 0x01}, // J
-    {0x7F, 0x08, 0x14, 0x22, 0x41}, // K
-    {0x7F, 0x40, 0x40, 0x40, 0x40}, // L
-    {0x7F, 0x02, 0x0C, 0x02, 0x7F}, // M
-    {0x7F, 0x04, 0x08, 0x10, 0x7F}, // N
-    {0x3E, 0x41, 0x41, 0x41, 0x3E}, // O
-    {0x7F, 0x09, 0x09, 0x09, 0x06}, // P
-    {0x3E, 0x41, 0x51, 0x21, 0x5E}, // Q
-    {0x7F, 0x09, 0x19, 0x29, 0x46}, // R
-    {0x46, 0x49, 0x49, 0x49, 0x31}, // S
-    {0x01, 0x01, 0x7F, 0x01, 0x01}, // T
-    {0x3F, 0x40, 0x40, 0x40, 0x3F}, // U
-    {0x1F, 0x20, 0x40, 0x20, 0x1F}, // V
-    {0x3F, 0x40, 0x38, 0x40, 0x3F}, // W
-    {0x63, 0x14, 0x08, 0x14, 0x63}, // X
-    {0x07, 0x08, 0x70, 0x08, 0x07}, // Y
-    {0x61, 0x51, 0x49, 0x45, 0x43}  // Z
+    {0x00, 0x00, 0x00, 0x00, 0x00}, // Space (0)
+    {0x00, 0x00, 0x5F, 0x00, 0x00}, // !     (1)
+    {0x00, 0x07, 0x00, 0x07, 0x00}, // "     (2)
+    {0x14, 0x7F, 0x14, 0x7F, 0x14}, // #     (3)
+    {0x24, 0x2A, 0x7F, 0x2A, 0x12}, // $     (4)
+    {0x23, 0x13, 0x08, 0x64, 0x62}, // %     (5)
+    {0x36, 0x49, 0x55, 0x22, 0x50}, // &     (6)
+    {0x00, 0x05, 0x03, 0x00, 0x00}, // '     (7)
+    {0x00, 0x1C, 0x22, 0x41, 0x00}, // (     (8)
+    {0x00, 0x41, 0x22, 0x1C, 0x00}, // )     (9)
+    {0x14, 0x08, 0x3E, 0x08, 0x14}, // *     (10)
+    {0x08, 0x08, 0x3E, 0x08, 0x08}, // +     (11)
+    {0x00, 0x50, 0x30, 0x00, 0x00}, // ,     (12)
+    {0x08, 0x08, 0x08, 0x08, 0x08}, // -     (13)
+    {0x00, 0x60, 0x60, 0x00, 0x00}, // .     (14)
+    {0x20, 0x10, 0x08, 0x04, 0x02}, // /     (15)
+    {0x3E, 0x51, 0x49, 0x45, 0x3E}, // 0     (16)
+    {0x00, 0x42, 0x7F, 0x40, 0x00}, // 1     (17)
+    {0x42, 0x61, 0x51, 0x49, 0x46}, // 2     (18)
+    {0x21, 0x41, 0x45, 0x4B, 0x31}, // 3     (19)
+    {0x18, 0x14, 0x12, 0x7F, 0x10}, // 4     (20)
+    {0x27, 0x45, 0x45, 0x45, 0x39}, // 5     (21)
+    {0x3C, 0x4A, 0x49, 0x49, 0x30}, // 6     (22)
+    {0x01, 0x71, 0x09, 0x05, 0x03}, // 7     (23)
+    {0x36, 0x49, 0x49, 0x49, 0x36}, // 8     (24)
+    {0x06, 0x49, 0x49, 0x29, 0x1E}, // 9     (25)
+    {0x00, 0x36, 0x36, 0x00, 0x00}, // :     (26)
+    {0x00, 0x56, 0x36, 0x00, 0x00}, // ;     (27)
+    {0x08, 0x14, 0x22, 0x41, 0x00}, // <     (28)
+    {0x14, 0x14, 0x14, 0x14, 0x14}, // =     (29)
+    {0x00, 0x41, 0x22, 0x14, 0x08}, // >     (30)
+    {0x02, 0x01, 0x51, 0x09, 0x06}, // ?     (31)
+    {0x32, 0x49, 0x79, 0x41, 0x3E}, // @     (32)
+    {0x7C, 0x12, 0x11, 0x12, 0x7C}, // А     (33)
+    {0x7F, 0x49, 0x49, 0x49, 0x31}, // Б     (34)
+    {0x7F, 0x49, 0x49, 0x49, 0x36}, // В     (35)
+    {0x7F, 0x01, 0x01, 0x01, 0x03}, // Г     (36)
+    {0xE0, 0x1F, 0x11, 0x1F, 0xE0}, // Д     (37)
+    {0x7F, 0x49, 0x49, 0x49, 0x41}, // Е     (38)
+    {0x7D, 0x48, 0x48, 0x48, 0x41}, // Ё     (39)
+    {0x77, 0x08, 0x7F, 0x08, 0x77}, // Ж     (40)
+    {0x41, 0x49, 0x49, 0x49, 0x36}, // З     (41)
+    {0x7F, 0x10, 0x08, 0x04, 0x7F}, // И     (42)
+    {0x7F, 0x10, 0x09, 0x04, 0x7F}, // Й     (43)
+    {0x7F, 0x08, 0x14, 0x22, 0x41}, // К     (44)
+    {0x40, 0x3F, 0x01, 0x01, 0x7F}, // Л     (45)
+    {0x7F, 0x02, 0x0C, 0x02, 0x7F}, // М     (46)
+    {0x7F, 0x08, 0x08, 0x08, 0x7F}, // Н     (47)
+    {0x3E, 0x41, 0x41, 0x41, 0x3E}, // О     (48)
+    {0x7F, 0x01, 0x01, 0x01, 0x7F}, // П     (49)
+    {0x7F, 0x09, 0x09, 0x09, 0x06}, // Р     (50)
+    {0x3E, 0x41, 0x41, 0x41, 0x22}, // С     (51)
+    {0x01, 0x01, 0x7F, 0x01, 0x01}, // Т     (52)
+    {0x0F, 0x50, 0x50, 0x50, 0x3F}, // У     (53)
+    {0x1C, 0x22, 0x7F, 0x22, 0x1C}, // Ф     (54)
+    {0x63, 0x14, 0x08, 0x14, 0x63}, // Х     (55)
+    {0x7F, 0x40, 0x40, 0x7F, 0xC0}, // Ц     (56)
+    {0x07, 0x08, 0x08, 0x08, 0x7F}, // Ч     (57)
+    {0x7F, 0x40, 0x7F, 0x40, 0x7F}, // Ш     (58)
+    {0x7F, 0x40, 0x7F, 0x40, 0xFF}, // Щ     (59)
+    {0x01, 0x7F, 0x48, 0x48, 0x30}, // Ъ     (60)
+    {0x7F, 0x48, 0x30, 0x00, 0x7F}, // Ы     (61)
+    {0x00, 0x7F, 0x48, 0x48, 0x30}, // Ь     (62)
+    {0x22, 0x41, 0x49, 0x49, 0x3E}, // Э     (63)
+    {0x7F, 0x08, 0x3E, 0x41, 0x3E}, // Ю     (64)
+    {0x46, 0x29, 0x19, 0x09, 0x7F}  // Я     (65)
 };
 
 static void display_tft_send_cmd(uint8_t cmd) {
@@ -129,15 +134,15 @@ static void display_tft_set_window(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y
     y0 += ST7735_OFFSET_Y;
     y1 += ST7735_OFFSET_Y;
 
-    display_tft_send_cmd(0x2A); // CASET
+    display_tft_send_cmd(0x2A);
     uint8_t data_x[] = { 0x00, x0, 0x00, x1 };
     display_tft_send_data(data_x, 4);
 
-    display_tft_send_cmd(0x2B); // RASET
+    display_tft_send_cmd(0x2B);
     uint8_t data_y[] = { 0x00, y0, 0x00, y1 };
     display_tft_send_data(data_y, 4);
 
-    display_tft_send_cmd(0x2C); // RAMWR
+    display_tft_send_cmd(0x2C);
 }
 
 void display_tft_fill_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
@@ -183,6 +188,10 @@ void display_tft_wake(void) {
     s_last_activity_time = esp_timer_get_time();
     if (!s_is_awake) {
         display_tft_set_backlight(true);
+        if (s_ui_state != UI_STATE_MAIN_SCREEN) {
+            // Перерисуем экран при пробуждении
+            render_menu();
+        }
     }
 }
 
@@ -191,33 +200,121 @@ void display_tft_sleep(void) {
     s_ui_state = UI_STATE_MAIN_SCREEN;
 }
 
-void display_tft_draw_char(int16_t x, int16_t y, char c, uint16_t color, uint16_t bg_color) {
-    if (c < ' ' || c > 'Z') c = '?';
-    uint8_t idx = c - ' ';
-
-    for (int i = 0; i < 5; i++) {
-        uint8_t line = font5x7[idx][i];
-        for (int j = 0; j < 7; j++) {
-            uint16_t pixel_color = (line & (1 << j)) ? color : bg_color;
-            display_tft_fill_rect(x + i, y + j, 1, 1, pixel_color);
+// Функция регулярной проверки активности (вызывать в основном цикле app_main)
+void display_tft_tick(void) {
+    if (s_is_awake) {
+        if (esp_timer_get_time() - s_last_activity_time > SLEEP_TIMEOUT_US) {
+            display_tft_sleep();
         }
     }
 }
 
+// Попиксельный перевод символа в массив байтов RGB565 для ST7735
+static void draw_glyph_fast(int16_t x, int16_t y, uint8_t idx, uint16_t color, uint16_t bg_color) {
+    if (x >= DISPLAY_WIDTH || y >= DISPLAY_HEIGHT || x + 5 > DISPLAY_WIDTH || y + 7 > DISPLAY_HEIGHT) return;
+
+    display_tft_set_window(x, y, x + 4, y + 6);
+
+    uint8_t glyph_buf[35 * 2];
+    uint16_t pos = 0;
+
+    uint8_t c_hi = color >> 8, c_lo = color & 0xFF;
+    uint8_t bg_hi = bg_color >> 8, bg_lo = bg_color & 0xFF;
+
+    for (int row = 0; row < 7; row++) {
+        for (int col = 0; col < 5; col++) {
+            uint8_t bit = (font5x7[idx][col] >> row) & 0x01;
+            glyph_buf[pos++] = bit ? c_hi : bg_hi;
+            glyph_buf[pos++] = bit ? c_lo : bg_lo;
+        }
+    }
+
+    gpio_set_level(DISPLAY_DC_PIN, 1);
+    spi_transaction_t t = {
+        .length = sizeof(glyph_buf) * 8,
+        .tx_buffer = glyph_buf
+    };
+    spi_device_polling_transmit(s_spi_dev, &t);
+}
+
+// Вывод строки с парсингом UTF-8
 void display_tft_draw_string(int16_t x, int16_t y, const char *str, uint16_t color, uint16_t bg_color) {
-    while (*str) {
+    const uint8_t *p = (const uint8_t *)str;
+
+    while (*p) {
         if (x + 6 > DISPLAY_WIDTH) break;
-        display_tft_draw_char(x, y, *str, color, bg_color);
+
+        uint8_t idx = 31; // '?' по умолчанию
+
+        // 1. ASCII Символы (1 байт)
+        if (*p < 0x80) {
+            uint8_t c = *p;
+            if (c >= ' ' && c <= '@') {
+                idx = c - ' ';
+            } else if (c >= '0' && c <= '9') {
+                idx = 16 + (c - '0');
+            } else if (c >= 'A' && c <= 'Z') {
+                idx = c - ' ';
+            } else if (c >= 'a' && c <= 'z') {
+                // Приводим строчные английские к заглавным
+                idx = (c - 32) - ' ';
+            } else {
+                idx = 0;
+            }
+            p++; // Сдвиг на 1 байт
+        } 
+        // 2. UTF-8 Кириллица (2 байта)
+        else if (*p == 0xD0 || *p == 0xD1) {
+            if (*(p + 1) == '\0') break; // Страховка от вылета за край строки
+
+            uint8_t b1 = *p++;
+            uint8_t b2 = *p++;
+            uint16_t unicode = ((b1 & 0x1F) << 6) | (b2 & 0x3F);
+
+            // Обработка Ё / ё
+            if (unicode == 0x0401 || unicode == 0x0451) {
+                idx = 39; // Ё в font5x7
+            }
+            // Заглавные А-Я (0x0410 .. 0x042F)
+            else if (unicode >= 0x0410 && unicode <= 0x042F) {
+                uint8_t offset = unicode - 0x0410;
+                // Учитываем, что в font5x7 буквой 39 является Ё,
+                // поэтому буквы после Е (начиная с Ж) сдвинуты на +1
+                if (offset >= 6) { // Начиная с Ж (offset 6)
+                    idx = 33 + offset + 1;
+                } else { // А, Б, В, Г, Д, Е
+                    idx = 33 + offset;
+                }
+            } 
+            // Строчные а-я (0x0430 .. 0x044F) -> приводим к заглавным
+            else if (unicode >= 0x0430 && unicode <= 0x044F) {
+                uint8_t offset = unicode - 0x0430;
+                if (offset >= 6) {
+                    idx = 33 + offset + 1;
+                } else {
+                    idx = 33 + offset;
+                }
+            }
+        } 
+        // Неизвестный байт
+        else {
+            p++;
+        }
+
+        draw_glyph_fast(x, y, idx, color, bg_color);
         x += 6;
-        str++;
     }
 }
 
-// Отрисовка меню
 static void render_menu(void) {
-    display_tft_fill_screen(COLOR_BLACK);
-    display_tft_fill_rect(0, 0, 128, 16, COLOR_BLUE);
-    display_tft_draw_string(10, 4, "SETTINGS", COLOR_WHITE, COLOR_BLUE);
+    static bool first_render = true;
+
+    if (first_render) {
+        display_tft_fill_screen(COLOR_BLACK);
+        display_tft_fill_rect(0, 0, 128, 16, COLOR_BLUE);
+        display_tft_draw_string(10, 4, "Настройки", COLOR_WHITE, COLOR_BLUE);
+        first_render = false;
+    }
 
     for (int i = 0; i < MENU_ITEMS_COUNT; i++) {
         uint16_t text_color = COLOR_WHITE;
@@ -225,8 +322,9 @@ static void render_menu(void) {
 
         if (i == s_selected_item) {
             bg_color = (s_ui_state == UI_STATE_MENU_EDIT) ? COLOR_RED : COLOR_DARKGRAY;
-            display_tft_fill_rect(2, 20 + (i * 20), 124, 18, bg_color);
         }
+
+        display_tft_fill_rect(2, 20 + (i * 20), 124, 18, bg_color);
 
         char buf[24];
         if (i == 0) snprintf(buf, sizeof(buf), "%s:%ld", MENU_LABELS[i], (long)s_config.min_start_sum);
@@ -238,7 +336,6 @@ static void render_menu(void) {
     }
 }
 
-// Главная функция обработки событий энкодера для меню
 void menu_process_event(encoder_event_t event) {
     display_tft_wake();
 
@@ -308,7 +405,7 @@ void display_tft_init(void) {
     };
 
     spi_device_interface_config_t devcfg = {
-        .clock_speed_hz = 20 * 1000 * 1000,
+        .clock_speed_hz = 26 * 1000 * 1000,
         .mode = 0,
         .spics_io_num = DISPLAY_CS_PIN,
         .queue_size = 7

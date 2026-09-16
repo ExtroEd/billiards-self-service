@@ -23,6 +23,11 @@ void app_main(void) {
     coin_events_queue = xQueueCreate(10, sizeof(int));
     encoder_events_queue = xQueueCreate(10, sizeof(encoder_event_t));
 
+    esp_err_t err = gpio_install_isr_service(0);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE("MAIN", "Failed to install GPIO ISR service: %s", esp_err_to_name(err));
+    }
+    
     // 2. Инициализируем систему и периферию
     system_state_init();
     coin_acceptor_init(coin_events_queue);
@@ -35,6 +40,9 @@ void app_main(void) {
     encoder_event_t enc_event;
 
     while (1) {
+        // Проверяем таймер автовыключения
+        display_tft_tick();
+
         // 1. Проверка монетоприемника
         if (xQueueReceive(coin_events_queue, &received_pulses, 0) == pdTRUE) {
             ESP_LOGI(TAG, "Монетоприемник: %d импульсов", received_pulses);

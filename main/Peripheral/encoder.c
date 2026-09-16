@@ -10,6 +10,7 @@ static volatile int64_t s_last_step_time = 0;
 
 // Накопительный счетчик микрошагов для деления на 4
 static volatile int8_t s_pulse_counter = 0;
+static volatile int8_t s_last_dir = 0; // Сохраняем последнее направление
 
 // Таблица переходов состояний энкодера
 static const int8_t KNOBDIR[] = {
@@ -36,9 +37,16 @@ static void IRAM_ATTR encoder_isr_handler(void *arg) {
 
     if (direction != 0) {
         s_last_step_time = current_time;
+
+        // Если направление вращения изменилось — сбрасываем остаток предыдущих микрошагов
+        if ((direction > 0 && s_last_dir < 0) || (direction < 0 && s_last_dir > 0)) {
+            s_pulse_counter = 0;
+        }
+        s_last_dir = direction;
+
         s_pulse_counter += direction;
 
-        // Отправляем событие ТОЛЬКО при накоплении 4 микрошагов (1 полный физический щелчок)
+        // Отправляем событие при накоплении 4 микрошагов (1 полный физический щелчок)
         if (s_pulse_counter >= 4 || s_pulse_counter <= -4) {
             encoder_event_t event = (s_pulse_counter >= 4) ? ENCODER_EVENT_UP : ENCODER_EVENT_DOWN;
             s_pulse_counter = 0; // Сбрасываем счетчик для следующего щелчка
@@ -87,6 +95,7 @@ static void encoder_button_task(void *pvParameters) {
 void encoder_init(QueueHandle_t event_queue) {
     s_event_queue = event_queue;
     s_pulse_counter = 0;
+    s_last_dir = 0;
 
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << ENCODER_CLK_PIN) | (1ULL << ENCODER_DT_PIN),
@@ -106,7 +115,6 @@ void encoder_init(QueueHandle_t event_queue) {
     };
     gpio_config(&sw_conf);
 
-    gpio_install_isr_service(0);
     gpio_isr_handler_add(ENCODER_CLK_PIN, encoder_isr_handler, NULL);
     gpio_isr_handler_add(ENCODER_DT_PIN, encoder_isr_handler, NULL);
 

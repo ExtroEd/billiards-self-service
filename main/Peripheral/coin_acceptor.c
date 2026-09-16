@@ -59,7 +59,6 @@ void coin_acceptor_init(QueueHandle_t coin_queue) {
     };
     gpio_config(&io_conf);
 
-    gpio_install_isr_service(0);
     gpio_isr_handler_add(COIN_PIN, gpio_isr_handler, NULL);
 
     // Запуск фоновой задачи обработки таймаутов

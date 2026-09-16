@@ -49,6 +49,7 @@ void display_tft_draw_char(int16_t x, int16_t y, char c, uint16_t color, uint16_
 void menu_process_event(encoder_event_t event);
 void display_show_main_screen(void);
 void display_tft_wake(void);
+void display_tft_tick(void);
 void display_tft_sleep(void);
 void menu_process_event(encoder_event_t event);
 
