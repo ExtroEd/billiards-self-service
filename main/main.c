@@ -8,6 +8,7 @@
 #include "system_state.h"
 #include "Peripheral/encoder.h"
 #include "Peripheral/display_tft.h"
+#include "Networking_Services/wifi_app.h"
 
 static const char *TAG = "MAIN";
 
@@ -38,6 +39,13 @@ void app_main(void) {
 
     int received_pulses = 0;
     encoder_event_t enc_event;
+
+    // Включение сетевого стека и Wi-Fi менеджера
+    wifi_app_init();
+
+    if (wifi_app_get_mode() == WIFI_APP_MODE_AP) {
+        ESP_LOGW(TAG, "Система работает в режиме конфигурации SoftAP (192.168.4.1)");
+    }
 
     while (1) {
         // Проверяем таймер автовыключения

@@ -18,6 +18,12 @@ typedef enum {
  */
 void wifi_app_init(void);
 
+// Занудительный запуск SoftAP по кнопке из меню (создает точку доступа)
+void wifi_app_start_ap_mode(void);
+
+// Проверка статуса подключения к домашнему роутеру (true - ОК, false - НЕТ)
+bool wifi_app_is_connected(void);
+
 /**
  * @brief Проверка текущего режима Wi-Fi
  */

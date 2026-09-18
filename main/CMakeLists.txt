@@ -9,6 +9,7 @@ idf_component_register(
         "Peripheral/display_7seg.c"
         "Peripheral/display_tft.c"
         "Peripheral/encoder.c"
+        "Peripheral/qr_code.c"
     INCLUDE_DIRS 
         "."
         "Business_Logic"
@@ -23,4 +24,5 @@ idf_component_register(
         esp_driver_spi
         nvs_flash 
         driver
+        qrcode
 )

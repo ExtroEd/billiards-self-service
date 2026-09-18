@@ -5,13 +5,16 @@
 #include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
+#include "Networking_Services/wifi_app.h"
+#include "qr_code.h"
+#include "qrcode.h"
 
 static const char *TAG = "DISPLAY_TFT";
 static spi_device_handle_t s_spi_dev = NULL;
 
 static bool s_is_awake = true;
 static int64_t s_last_activity_time = 0;
-#define SLEEP_TIMEOUT_US (15 * 1000 * 1000LL) // 15 секунд
+#define SLEEP_TIMEOUT_US (30 * 1000 * 1000LL) // 30 секунд
 
 #define ST7735_OFFSET_X  2
 #define ST7735_OFFSET_Y  1
@@ -19,22 +22,25 @@ static int64_t s_last_activity_time = 0;
 typedef enum {
     UI_STATE_MAIN_SCREEN,
     UI_STATE_MENU_NAV,   
-    UI_STATE_MENU_EDIT   
+    UI_STATE_MENU_EDIT,
+    UI_STATE_SHOW_QR
 } ui_state_t;
 
 static ui_state_t s_ui_state = UI_STATE_MAIN_SCREEN;
 static int8_t s_selected_item = 0;
 
 static void render_menu(void);
+static void qrcode_display_cb(esp_qrcode_handle_t qrcode);
 
-#define MENU_ITEMS_COUNT 6
+#define MENU_ITEMS_COUNT 7
 static const char *MENU_LABELS[MENU_ITEMS_COUNT] = {
     "1.Мин.старт",
     "2.Цена 10мин",
     "3.Касса всего",
     "4.Сброс кассы",
     "5.Сброс время",
-    "6.Сохранить"
+    "6.Сохранить",
+    "7.Вай-Фай Настр."
 };
 
 static device_config_t s_config = {
@@ -316,6 +322,11 @@ static void render_menu(void) {
         first_render = false;
     }
 
+    // Шаг по Y: (160 - 16 шапка) / 7 пунктов = ~20px на элемент. 
+    // Для компактности берем высоту элемента 16px и отступ 2px
+    const int item_height = 16;
+    const int start_y = 18;
+
     for (int i = 0; i < MENU_ITEMS_COUNT; i++) {
         uint16_t text_color = COLOR_WHITE;
         uint16_t bg_color = COLOR_BLACK;
@@ -324,7 +335,9 @@ static void render_menu(void) {
             bg_color = (s_ui_state == UI_STATE_MENU_EDIT) ? COLOR_RED : COLOR_DARKGRAY;
         }
 
-        display_tft_fill_rect(2, 20 + (i * 20), 124, 18, bg_color);
+        int cur_y = start_y + (i * (item_height + 2));
+
+        display_tft_fill_rect(2, cur_y, 124, item_height, bg_color);
 
         char buf[24];
         if (i == 0) snprintf(buf, sizeof(buf), "%s:%ld", MENU_LABELS[i], (long)s_config.min_start_sum);
@@ -332,7 +345,7 @@ static void render_menu(void) {
         else if (i == 2) snprintf(buf, sizeof(buf), "%s:%ld", MENU_LABELS[i], (long)s_config.total_money);
         else snprintf(buf, sizeof(buf), "%s", MENU_LABELS[i]);
 
-        display_tft_draw_string(4, 22 + (i * 20), buf, text_color, bg_color);
+        display_tft_draw_string(4, cur_y + 4, buf, text_color, bg_color);
     }
 }
 
@@ -343,6 +356,14 @@ void menu_process_event(encoder_event_t event) {
         if (event == ENCODER_EVENT_CLICK || event == ENCODER_EVENT_LONG_PRESS) {
             s_ui_state = UI_STATE_MENU_NAV;
             s_selected_item = 0;
+            render_menu();
+        }
+        return;
+    }
+
+    if (s_ui_state == UI_STATE_SHOW_QR) {
+        if (event == ENCODER_EVENT_CLICK || event == ENCODER_EVENT_LONG_PRESS) {
+            s_ui_state = UI_STATE_MENU_NAV;
             render_menu();
         }
         return;
@@ -366,7 +387,30 @@ void menu_process_event(encoder_event_t event) {
                 s_config.current_balance = 0;
                 ESP_LOGI(TAG, "Time reset!");
             } else if (s_selected_item == 5) {
+                // Выход из меню
                 display_tft_sleep();
+                return;
+            } else if (s_selected_item == 6) {
+                ESP_LOGI(TAG, "Открытие QR-кода для настройки Wi-Fi...");
+
+                // 1. Включаем SoftAP (правильная функция из wifi_app.h)
+                wifi_app_start_ap_mode(); 
+
+                // 2. Формируем строку Wi-Fi
+                const char *qr_payload = "WIFI:S:ESP32_Config;T:WPA;P:12345678;;";
+
+                // 3. Конфигурируем и генерируем QR-код
+                esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
+                cfg.display_func = qrcode_display_cb; // Передаем нашу callback-функцию
+                cfg.max_qrcode_version = 10;
+
+                // Функция генерирует QR и сама передает handle в qrcode_display_cb
+                esp_err_t err = esp_qrcode_generate(&cfg, qr_payload);
+                if (err == ESP_OK) {
+                    s_ui_state = UI_STATE_SHOW_QR;
+                } else {
+                    ESP_LOGE(TAG, "Ошибка генерации QR-кода: %d", err);
+                }
                 return;
             }
             render_menu();
@@ -431,4 +475,43 @@ void display_tft_init(void) {
     display_tft_set_backlight(true);
     s_last_activity_time = esp_timer_get_time();
     ESP_LOGI(TAG, "ST7735 initialized successfully.");
+}
+
+/**
+ * @brief Отрисовка QR-кода на ST7735 с автоматическим центрированием
+ */
+void display_tft_draw_qrcode(esp_qrcode_handle_t qrcode, uint8_t scale) {
+    if (!qrcode) return;
+
+    int qr_size = esp_qrcode_get_size(qrcode);
+    uint16_t qr_size_px = qr_size * scale;
+    
+    if (qr_size_px > DISPLAY_WIDTH || qr_size_px > DISPLAY_HEIGHT) {
+        ESP_LOGE(TAG, "QR-код слишком большой для экрана! (Size: %d px)", qr_size_px);
+        return;
+    }
+
+    int16_t start_x = (DISPLAY_WIDTH - qr_size_px) / 2;
+    int16_t start_y = (DISPLAY_HEIGHT - qr_size_px) / 2;
+
+    display_tft_fill_screen(COLOR_WHITE);
+
+    for (uint8_t y = 0; y < qr_size; y++) {
+        for (uint8_t x = 0; x < qr_size; x++) {
+            if (esp_qrcode_get_module(qrcode, x, y)) {
+                display_tft_fill_rect(
+                    start_x + (x * scale),
+                    start_y + (y * scale),
+                    scale,
+                    scale,
+                    COLOR_BLACK
+                );
+            }
+        }
+    }
+}
+
+// Callback-функция, которую вызывает сама библиотека esp_qrcode
+static void qrcode_display_cb(esp_qrcode_handle_t qrcode) {
+    display_tft_draw_qrcode(qrcode, 3); // Рисуем с масштабом 3
 }

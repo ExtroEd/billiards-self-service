@@ -6,6 +6,7 @@
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "Peripheral/encoder.h"
+#include "qrcode.h"
 
 // Настройка пинов
 #define DISPLAY_SCL_PIN   GPIO_NUM_14
@@ -51,6 +52,7 @@ void display_show_main_screen(void);
 void display_tft_wake(void);
 void display_tft_tick(void);
 void display_tft_sleep(void);
+void display_tft_draw_qrcode(esp_qrcode_handle_t qrcode, uint8_t scale);
 void menu_process_event(encoder_event_t event);
 
 #endif // DISPLAY_TFT_H
