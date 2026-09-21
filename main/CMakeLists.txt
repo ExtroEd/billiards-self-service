@@ -2,7 +2,7 @@ idf_component_register(
     SRCS 
         "main.c"
         "Business_Logic/system_state.c"
-        "Networking_Services/mqtt_client.c"
+        "Networking_Services/app_mqtt_client.c"
         "Networking_Services/tg_bot.c"
         "Networking_Services/wifi_app.c"
         "Peripheral/coin_acceptor.c"
@@ -16,8 +16,9 @@ idf_component_register(
         "Networking_Services"
         "Peripheral"
     REQUIRES 
-        esp_wifi 
+        esp-tls
         esp_event 
+        esp_wifi 
         esp_timer
         esp_http_server 
         esp_driver_gpio
@@ -25,4 +26,5 @@ idf_component_register(
         nvs_flash 
         driver
         qrcode
+        mqtt
 )
