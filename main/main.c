@@ -4,7 +4,6 @@
 #include "freertos/queue.h"
 #include "esp_log.h"
 
-#include "coin_acceptor.h"
 #include "system_state.h"
 #include "Peripheral/encoder.h"
 #include "Peripheral/display_tft.h"
@@ -12,7 +11,6 @@
 
 static const char *TAG = "MAIN";
 
-static QueueHandle_t coin_events_queue = NULL;
 static QueueHandle_t encoder_events_queue = NULL;
 
 void app_main(void) {
@@ -20,8 +18,7 @@ void app_main(void) {
     ESP_LOGI(TAG, "ESP-IDF: Старт системы");
     ESP_LOGI(TAG, "=========================================");
 
-    // 1. Создаем очереди
-    coin_events_queue = xQueueCreate(10, sizeof(int));
+    // 1. Создаем очередь для энкодера
     encoder_events_queue = xQueueCreate(10, sizeof(encoder_event_t));
 
     esp_err_t err = gpio_install_isr_service(0);
@@ -31,13 +28,11 @@ void app_main(void) {
     
     // 2. Инициализируем систему и периферию
     system_state_init();
-    coin_acceptor_init(coin_events_queue);
     encoder_init(encoder_events_queue);
     display_tft_init(); // Инициализация ST7735 и включение подсветки
 
     ESP_LOGI(TAG, "Готово к тестированию. Покрути или нажми энкодер!");
 
-    int received_pulses = 0;
     encoder_event_t enc_event;
 
     // Включение сетевого стека и Wi-Fi менеджера
@@ -51,16 +46,7 @@ void app_main(void) {
         // Проверяем таймер автовыключения
         display_tft_tick();
 
-        // 1. Проверка монетоприемника
-        if (xQueueReceive(coin_events_queue, &received_pulses, 0) == pdTRUE) {
-            ESP_LOGI(TAG, "Монетоприемник: %d импульсов", received_pulses);
-            system_state_add_pulses(received_pulses);
-            
-            // Будим дисплей при внесении оплаты
-            display_tft_wake();
-        }
-
-        // 2. Проверка энкодера и передача событий в меню дисплея
+        // Проверка энкодера и передача событий в меню дисплея
         if (xQueueReceive(encoder_events_queue, &enc_event, 0) == pdTRUE) {
             // Передаём событие энкодера напрямую в логику меню/дисплея
             menu_process_event(enc_event);
