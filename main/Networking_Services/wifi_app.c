@@ -19,7 +19,7 @@ static const char *TAG = "WIFI_APP";
 #define NVS_KEY_SSID       "ssid"
 #define NVS_KEY_PASS       "pass"
 
-#define AP_SSID            "ESP32_Config"
+#define AP_SSID            "ESP32_Config_1"
 #define AP_PASS            "12345678"
 
 static EventGroupHandle_t s_wifi_event_group;

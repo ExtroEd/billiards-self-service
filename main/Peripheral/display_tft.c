@@ -40,7 +40,7 @@ static const char *MENU_LABELS[MENU_ITEMS_COUNT] = {
     "4.Сброс кассы",
     "5.Сброс время",
     "6.Сохранить",
-    "7.Вай-Фай Настр."
+    "7.Вай-Фай"
 };
 
 static device_config_t s_config = {

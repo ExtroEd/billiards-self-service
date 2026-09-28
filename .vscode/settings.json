@@ -26,7 +26,7 @@
     "--compile-commands-dir=e:\\Programming\\Visual_Studio_Projects\\billard\\Billards\\build"
   ],
   "idf.customExtraVars": {},
-  "idf.portWin": "COM4",
   "idf.flashType": "UART",
-  "idf.currentSetup": "E:\\Programming\\esp\\.espressif\\v6.1\\esp-idf"
+  "idf.currentSetup": "E:\\Programming\\esp\\.espressif\\v6.1\\esp-idf",
+  "idf.port": "COM4"
 }
