@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -31,16 +32,16 @@ void app_main(void) {
     encoder_init(encoder_events_queue);
     display_tft_init(); // Инициализация ST7735 и включение подсветки
 
-    ESP_LOGI(TAG, "Готово к тестированию. Покрути или нажми энкодер!");
-
-    encoder_event_t enc_event;
-
-    // Включение сетевого стека и Wi-Fi менеджера
+    // 3. Включение сетевого стека и Wi-Fi менеджера
     wifi_app_init();
 
     if (wifi_app_get_mode() == WIFI_APP_MODE_AP) {
         ESP_LOGW(TAG, "Система работает в режиме конфигурации SoftAP (192.168.4.1)");
     }
+
+    ESP_LOGI(TAG, "Готово к работе. Покрути или нажми энкодер!");
+
+    encoder_event_t enc_event;
 
     while (1) {
         // Проверяем таймер автовыключения
@@ -48,16 +49,15 @@ void app_main(void) {
 
         // Проверка энкодера и передача событий в меню дисплея
         if (xQueueReceive(encoder_events_queue, &enc_event, 0) == pdTRUE) {
-            // Передаём событие энкодера напрямую в логику меню/дисплея
             menu_process_event(enc_event);
 
             switch (enc_event) {
                 case ENCODER_EVENT_UP:
-                    ESP_LOGI(TAG, ">>> Энкодер: ВРАЩЕНИЕ ВВЕРХ (По часовой) <<<");
+                    ESP_LOGI(TAG, ">>> Энкодер: ВРАЩЕНИЕ ВВЕРХ <<<");
                     break;
 
                 case ENCODER_EVENT_DOWN:
-                    ESP_LOGI(TAG, ">>> Энкодер: ВРАЩЕНИЕ ВНИЗ (Против часовой) <<<");
+                    ESP_LOGI(TAG, ">>> Энкодер: ВРАЩЕНИЕ ВНИЗ <<<");
                     break;
 
                 case ENCODER_EVENT_CLICK:

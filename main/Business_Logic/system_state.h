@@ -2,24 +2,64 @@
 #define SYSTEM_STATE_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
-#define SOM_PER_PULSE 1
+#define RELAY_GPIO_PIN 17
 
 /**
- * @brief Инициализация состояния системы (мьютексы/переменные)
+ * @brief Инициализация состояния системы, NVS, GPIO реле и мьютексов
  */
 void system_state_init(void);
 
 /**
- * @brief Добавить баланс (на основе полученных импульсов)
- * @param pulses Количество полученных импульсов
+ * @brief Добавить сумму напрямую в сомах (при оплате или тестировании)
+ * @param amount Внесенная сумма в сомах
  */
-void system_state_add_pulses(int pulses);
+void system_state_add_credit(int amount);
 
 /**
  * @brief Получить текущий баланс сомов
- * @return int Текущий баланс
  */
 int system_state_get_balance(void);
+
+/**
+ * @brief Сбросить текущий баланс, обнулить время и выключить реле
+ */
+void system_state_reset_balance(void);
+
+/**
+ * @brief Установить минимальный порог старта (в сомах)
+ */
+void system_state_set_min_threshold(int min_soms);
+
+/**
+ * @brief Получить текущий порог старта
+ */
+int system_state_get_min_threshold(void);
+
+/**
+ * @brief Установить цену за 10 минут игры (в сомах)
+ */
+void system_state_set_price_per_10min(int price);
+
+/**
+ * @brief Получить текущую цену за 10 минут
+ */
+int system_state_get_price_per_10min(void);
+
+/**
+ * @brief Получить значение общей кассы
+ */
+int32_t system_state_get_total_money(void);
+
+/**
+ * @brief Сбросить общую кассу в 0
+ */
+void system_state_reset_total_money(void);
+
+/**
+ * @brief Получить текущий статус реле (включено/выключено)
+ */
+bool system_state_is_relay_active(void);
 
 #endif // SYSTEM_STATE_H
