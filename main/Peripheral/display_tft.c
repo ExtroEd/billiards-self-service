@@ -15,40 +15,35 @@ static spi_device_handle_t s_spi_dev = NULL;
 
 static bool s_is_awake = true;
 static int64_t s_last_activity_time = 0;
-#define SLEEP_TIMEOUT_US (30 * 1000 * 1000LL) // 30 секунд
+#define SLEEP_TIMEOUT_US (60 * 1000 * 1000LL) // 60 секунд
 
 #define ST7735_OFFSET_X  2
 #define ST7735_OFFSET_Y  1
 
 typedef enum {
-    UI_STATE_MAIN_SCREEN,
     UI_STATE_MENU_NAV,   
     UI_STATE_MENU_EDIT,
     UI_STATE_SHOW_QR
 } ui_state_t;
 
-static ui_state_t s_ui_state = UI_STATE_MAIN_SCREEN;
+// Начальное состояние теперь сразу Меню
+static ui_state_t s_ui_state = UI_STATE_MENU_NAV;
 static int8_t s_selected_item = 0;
-
-static int64_t s_deposit_show_time = 0;
-static int s_last_deposit_amount = 0;
-#define DEPOSIT_POPUP_TIMEOUT_US (5 * 1000 * 1000LL)
 
 static void render_menu(void);
 static void qrcode_display_cb(esp_qrcode_handle_t qrcode);
 
-#define MENU_ITEMS_COUNT 8
+#define MENU_ITEMS_COUNT 7
 #define VISIBLE_MENU_ITEMS 6 
 
 static const char *MENU_LABELS[MENU_ITEMS_COUNT] = {
-    "1.Мин.старт",
-    "2.Цена 10мин",
-    "3.Касса всего",
-    "4.Сброс кассы",
-    "5.Сброс баланс",
-    "6.Выход",
-    "7.Вай-Фай",
-    "8.+10 сом"
+    "1.Вай-Фай",
+    "2.Мин.старт",
+    "3.Цена 1час",
+    "4.Касса всего",
+    "5.Сбр. кассы",
+    "6.Сбр. времени",
+    "7.+10 сом"
 };
 
 // Шрифт 5x7: ASCII (0..32) + Кириллица А-Я (33..65)
@@ -161,9 +156,7 @@ void display_tft_wake(void) {
     s_last_activity_time = esp_timer_get_time();
     if (!s_is_awake) {
         display_tft_set_backlight(true);
-        if (s_ui_state == UI_STATE_MAIN_SCREEN) {
-            display_show_main_screen();
-        } else if (s_ui_state != UI_STATE_SHOW_QR) {
+        if (s_ui_state != UI_STATE_SHOW_QR) {
             render_menu();
         }
     }
@@ -171,74 +164,10 @@ void display_tft_wake(void) {
 
 void display_tft_sleep(void) {
     display_tft_set_backlight(false);
-    s_ui_state = UI_STATE_MAIN_SCREEN;
-}
-
-void display_show_main_screen(void) {
-    static int last_balance = -1;
-    static bool last_relay_state = false;
-    static int last_threshold = -1;
-    static bool last_popup_active = false;
-
-    int cur_balance = system_state_get_balance();
-    bool cur_relay = system_state_is_relay_active();
-    int cur_threshold = system_state_get_min_threshold();
-    
-    bool is_popup_active = (esp_timer_get_time() - s_deposit_show_time) < DEPOSIT_POPUP_TIMEOUT_US;
-
-    if (last_balance != -1 && cur_balance > last_balance) {
-        s_last_deposit_amount = cur_balance - last_balance;
-        s_deposit_show_time = esp_timer_get_time();
-        is_popup_active = true;
-    }
-
-    if (cur_balance == last_balance && 
-        cur_relay == last_relay_state && 
-        cur_threshold == last_threshold &&
-        is_popup_active == last_popup_active) {
-        return;
-    }
-
-    last_balance = cur_balance;
-    last_relay_state = cur_relay;
-    last_threshold = cur_threshold;
-    last_popup_active = is_popup_active;
-
-    display_tft_fill_screen(COLOR_BLACK);
-    
-    // Шапка
-    display_tft_fill_rect(0, 0, 128, 18, COLOR_BLUE);
-    display_tft_draw_string(20, 5, "ТЕРМИНАЛ", COLOR_WHITE, COLOR_BLUE);
-
-    char buf[32];
-
-    if (is_popup_active) {
-        display_tft_fill_rect(5, 25, 118, 42, COLOR_DARKGRAY);
-        display_tft_draw_string(10, 30, "+ Внесено:", COLOR_YELLOW, COLOR_DARKGRAY);
-        snprintf(buf, sizeof(buf), "+%d сом", s_last_deposit_amount);
-        display_tft_draw_string(10, 48, buf, COLOR_GREEN, COLOR_DARKGRAY);
-    }
-
-    // Мин. старт
-    snprintf(buf, sizeof(buf), "Мин. старт: %d сом", cur_threshold);
-    display_tft_draw_string(10, 75, buf, COLOR_CYAN, COLOR_BLACK);
-
-    // Статус Реле
-    display_tft_draw_string(10, 105, "Статус:", COLOR_WHITE, COLOR_BLACK);
-    if (cur_relay) {
-        display_tft_fill_rect(10, 120, 108, 22, COLOR_GREEN);
-        display_tft_draw_string(25, 127, "ВКЛЮЧЕНО", COLOR_BLACK, COLOR_GREEN);
-    } else {
-        display_tft_fill_rect(10, 120, 108, 22, COLOR_RED);
-        display_tft_draw_string(25, 127, "ВЫКЛЮЧЕНО", COLOR_WHITE, COLOR_RED);
-    }
 }
 
 void display_tft_tick(void) {
     if (s_is_awake) {
-        if (s_ui_state == UI_STATE_MAIN_SCREEN) {
-            display_show_main_screen();
-        }
         if (esp_timer_get_time() - s_last_activity_time > SLEEP_TIMEOUT_US) {
             display_tft_sleep();
         }
@@ -276,7 +205,7 @@ void display_tft_draw_string(int16_t x, int16_t y, const char *str, uint16_t col
     const uint8_t *p = (const uint8_t *)str;
 
     while (*p) {
-        if (x + 6 > DISPLAY_WIDTH) break;
+        if (x + 5 > DISPLAY_WIDTH) break;
 
         uint8_t idx = 31; 
 
@@ -350,10 +279,12 @@ static void render_menu(void) {
 
         char buf[24];
         if (item_idx == 0) {
-            snprintf(buf, sizeof(buf), "%s:%d", MENU_LABELS[item_idx], system_state_get_min_threshold());
+            snprintf(buf, sizeof(buf), "%s", MENU_LABELS[item_idx]);
         } else if (item_idx == 1) {
-            snprintf(buf, sizeof(buf), "%s:%d", MENU_LABELS[item_idx], system_state_get_price_per_10min());
+            snprintf(buf, sizeof(buf), "%s:%d", MENU_LABELS[item_idx], system_state_get_min_threshold());
         } else if (item_idx == 2) {
+            snprintf(buf, sizeof(buf), "%s:%d", MENU_LABELS[item_idx], system_state_get_price_per_1hour());
+        } else if (item_idx == 3) {
             snprintf(buf, sizeof(buf), "%s:%ld", MENU_LABELS[item_idx], (long)system_state_get_total_money());
         } else {
             snprintf(buf, sizeof(buf), "%s", MENU_LABELS[item_idx]);
@@ -365,15 +296,6 @@ static void render_menu(void) {
 
 void menu_process_event(encoder_event_t event) {
     display_tft_wake();
-
-    if (s_ui_state == UI_STATE_MAIN_SCREEN) {
-        if (event == ENCODER_EVENT_CLICK || event == ENCODER_EVENT_LONG_PRESS) {
-            s_ui_state = UI_STATE_MENU_NAV;
-            s_selected_item = 0;
-            render_menu();
-        }
-        return;
-    }
 
     if (s_ui_state == UI_STATE_SHOW_QR) {
         if (event == ENCODER_EVENT_CLICK || event == ENCODER_EVENT_LONG_PRESS) {
@@ -391,25 +313,12 @@ void menu_process_event(encoder_event_t event) {
             s_selected_item = (s_selected_item < MENU_ITEMS_COUNT - 1) ? s_selected_item + 1 : 0;
             render_menu();
         } else if (event == ENCODER_EVENT_CLICK) {
-            if (s_selected_item == 0 || s_selected_item == 1) {
-                s_ui_state = UI_STATE_MENU_EDIT;
-            } else if (s_selected_item == 3) {
-                system_state_reset_total_money();
-                ESP_LOGI(TAG, "Касса сброшена!");
-            } else if (s_selected_item == 4) {
-                system_state_reset_balance();
-                ESP_LOGI(TAG, "Баланс сброшен и реле выключено!");
-            } else if (s_selected_item == 5) {
-                s_ui_state = UI_STATE_MAIN_SCREEN;
-                display_show_main_screen();
-                return;
-            } else if (s_selected_item == 6) {
+            if (s_selected_item == 0) {
+                // 1. Вай-Фай
                 ESP_LOGI(TAG, "Открытие QR-кода для настройки Wi-Fi...");
-
                 wifi_app_start_ap_mode(); 
 
                 const char *qr_payload = "WIFI:S:ESP32_Config;T:WPA;P:12345678;;";
-
                 esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
                 cfg.display_func = qrcode_display_cb;
                 cfg.max_qrcode_version = 10;
@@ -421,25 +330,31 @@ void menu_process_event(encoder_event_t event) {
                     ESP_LOGE(TAG, "Ошибка генерации QR-кода: %d", err);
                 }
                 return;
-            } else if (s_selected_item == 7) {
+            } else if (s_selected_item == 1 || s_selected_item == 2) {
+                // Мин. старт или Цена за 1 час
+                s_ui_state = UI_STATE_MENU_EDIT;
+            } else if (s_selected_item == 4) {
+                // Сброс кассы
+                system_state_reset_total_money();
+            } else if (s_selected_item == 5) {
+                // Сброс времени
+                system_state_reset_balance();
+            } else if (s_selected_item == 6) {
+                // +10 сом
                 system_state_add_credit(10);
-                s_last_deposit_amount = 10;
-                s_deposit_show_time = esp_timer_get_time();
-
-                ESP_LOGI(TAG, "Зачислино +10 сом из меню!");
             }
             render_menu();
         }
     } 
     else if (s_ui_state == UI_STATE_MENU_EDIT) {
-        if (s_selected_item == 0) {
+        if (s_selected_item == 1) {
             int th = system_state_get_min_threshold();
             if (event == ENCODER_EVENT_UP && th < 1000) system_state_set_min_threshold(th + 5);
             if (event == ENCODER_EVENT_DOWN && th >= 5) system_state_set_min_threshold(th - 5);
-        } else if (s_selected_item == 1) {
-            int price = system_state_get_price_per_10min();
-            if (event == ENCODER_EVENT_UP && price < 500) system_state_set_price_per_10min(price + 5);
-            if (event == ENCODER_EVENT_DOWN && price > 5) system_state_set_price_per_10min(price - 5);
+        } else if (s_selected_item == 2) {
+            int price = system_state_get_price_per_1hour();
+            if (event == ENCODER_EVENT_UP && price < 5000) system_state_set_price_per_1hour(price + 5);
+            if (event == ENCODER_EVENT_DOWN && price > 5) system_state_set_price_per_1hour(price - 5);
         }
 
         if (event == ENCODER_EVENT_CLICK) {
@@ -491,8 +406,10 @@ void display_tft_init(void) {
 
     display_tft_set_backlight(true);
     s_last_activity_time = esp_timer_get_time();
-    display_show_main_screen();
-    ESP_LOGI(TAG, "ST7735 initialized successfully.");
+    
+    // Сразу отрисовываем меню
+    render_menu();
+    ESP_LOGI(TAG, "ST7735 initialized successfully with Menu screen.");
 }
 
 void display_tft_draw_qrcode(esp_qrcode_handle_t qrcode, uint8_t scale) {

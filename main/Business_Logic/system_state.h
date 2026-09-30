@@ -38,14 +38,14 @@ void system_state_set_min_threshold(int min_soms);
 int system_state_get_min_threshold(void);
 
 /**
- * @brief Установить цену за 10 минут игры (в сомах)
+ * @brief Установить цену за 1 час игры (в сомах)
  */
-void system_state_set_price_per_10min(int price);
+void system_state_set_price_per_1hour(int price);
 
 /**
- * @brief Получить текущую цену за 10 минут
+ * @brief Получить текущую цену за 1 час
  */
-int system_state_get_price_per_10min(void);
+int system_state_get_price_per_1hour(void);
 
 /**
  * @brief Получить значение общей кассы

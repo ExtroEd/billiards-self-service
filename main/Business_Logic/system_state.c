@@ -16,7 +16,8 @@ static const char *NVS_NAMESPACE = "storage";
 
 static int g_balance = 0;
 static int g_min_threshold_soms = 30; // 30 сом по умолчанию
-static int g_price_per_10min = 30;    // 30 сом за 10 минут по умолчанию
+// По умолчанию: 180 сом за 1 час
+static int g_price_per_1hour = 180;
 static int32_t g_total_money = 0;      // Касса
 static int g_remaining_seconds = 0;
 static bool g_relay_state = false;
@@ -32,16 +33,13 @@ static void load_config_from_nvs(void) {
         if (nvs_get_i32(my_handle, "min_thresh", &val32) == ESP_OK) {
             g_min_threshold_soms = (int)val32;
         }
-        if (nvs_get_i32(my_handle, "price_10m", &val32) == ESP_OK) {
-            g_price_per_10min = (int)val32;
+        if (nvs_get_i32(my_handle, "price_1h", &val32) == ESP_OK) {
+            g_price_per_1hour = (int)val32;
         }
         if (nvs_get_i32(my_handle, "total_cash", &val32) == ESP_OK) {
             g_total_money = val32;
         }
         nvs_close(my_handle);
-        ESP_LOGI(TAG_SYS, "Настройки успешно загружены из NVS!");
-    } else {
-        ESP_LOGW(TAG_SYS, "NVS пуст или ошибка открытия. Используются значения по умолчанию.");
     }
 }
 
@@ -51,20 +49,17 @@ static void save_config_to_nvs(void) {
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &my_handle);
     if (err == ESP_OK) {
         nvs_set_i32(my_handle, "min_thresh", g_min_threshold_soms);
-        nvs_set_i32(my_handle, "price_10m", g_price_per_10min);
+        nvs_set_i32(my_handle, "price_1h", g_price_per_1hour);
         nvs_set_i32(my_handle, "total_cash", g_total_money);
         nvs_commit(my_handle);
         nvs_close(my_handle);
-        ESP_LOGI(TAG_SYS, "Настройки сохранены в NVS!");
-    } else {
-        ESP_LOGE(TAG_SYS, "Ошибка сохранения настроек в NVS: %s", esp_err_to_name(err));
     }
 }
 
-// Вспомогательный расчёт времени: N сом * 600 сек / цена_за_10мин
+// Перерасчёт времени: N сом * 3600 сек / цена_за_1_час
 static int convert_soms_to_seconds(int soms) {
-    if (g_price_per_10min <= 0) return 0;
-    return (soms * 600) / g_price_per_10min;
+    if (g_price_per_1hour <= 0) return 0;
+    return (soms * 3600) / g_price_per_1hour;
 }
 
 static void update_relay_state_unlocked(void) {
@@ -135,8 +130,8 @@ void system_state_init(void) {
 
     xTaskCreate(timer_countdown_task, "timer_countdown_task", 2048, NULL, 5, NULL);
 
-    ESP_LOGI(TAG_SYS, "Инициализация завершена. Порог: %d сом, Цена 10мин: %d сом", 
-             g_min_threshold_soms, g_price_per_10min);
+    ESP_LOGI(TAG_SYS, "Инициализация завершена. Порог: %d сом, Цена 1 час: %d сом", 
+             g_min_threshold_soms, g_price_per_1hour);
 }
 
 void system_state_add_credit(int amount) {
@@ -203,20 +198,20 @@ int system_state_get_min_threshold(void) {
     return threshold;
 }
 
-void system_state_set_price_per_10min(int price) {
+void system_state_set_price_per_1hour(int price) {
     if (price <= 0) return;
 
     if (xSemaphoreTake(g_state_mutex, portMAX_DELAY) == pdTRUE) {
-        g_price_per_10min = price;
+        g_price_per_1hour = price;
         save_config_to_nvs();
         xSemaphoreGive(g_state_mutex);
     }
 }
 
-int system_state_get_price_per_10min(void) {
-    int price = 30;
+int system_state_get_price_per_1hour(void) {
+    int price = 180;
     if (xSemaphoreTake(g_state_mutex, portMAX_DELAY) == pdTRUE) {
-        price = g_price_per_10min;
+        price = g_price_per_1hour;
         xSemaphoreGive(g_state_mutex);
     }
     return price;

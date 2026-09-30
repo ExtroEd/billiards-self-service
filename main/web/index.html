@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Панель Терминала</title>
+    
+    <link rel="icon" href="data:,">
+
+    <style>
+        body { font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; margin: 0; padding: 15px; }
+        .card { background: #2a2a2a; padding: 20px; border-radius: 12px; margin-bottom: 15px; max-width: 400px; margin-left: auto; margin-right: auto; }
+        h2, h3 { margin-top: 0; color: #00d2ff; text-align: center; }
+        .stat-val { font-size: 24px; font-weight: bold; color: #00ff88; text-align: center; margin: 10px 0; }
+        label { display: block; margin: 10px 0 5px; font-size: 14px; }
+        input[type="number"], input[type="text"], input[type="password"] {
+            width: 100%; padding: 10px; border: none; border-radius: 6px; box-sizing: border-box; background: #333; color: #fff; font-size: 16px;
+        }
+        button {
+            width: 100%; background: #00d2ff; color: #000; font-weight: bold; padding: 12px; border: none;
+            border-radius: 6px; cursor: pointer; font-size: 16px; margin-top: 10px;
+        }
+        button.danger { background: #ff4757; color: #fff; }
+        button.action { background: #2ed573; color: #fff; }
+        .row { display: flex; gap: 10px; }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>Панель Управления</h2>
+        <div>Статус реле: <b id="relay-status">---</b></div>
+        <div>Текущий баланс:</div>
+        <div class="stat-val" id="balance-val">0 сом</div>
+        <div>Общая касса:</div>
+        <div class="stat-val" id="total-val" style="color:#eccc68;">0 сом</div>
+    </div>
+
+    <div class="card">
+        <h3>Настройки Цен</h3>
+        <label for="min-start">Мин. старт (сом, от 5 до 1000):</label>
+        <input type="number" id="min-start" min="5" max="1000" step="5">
+
+        <label for="price-1h">Цена за 1 час (сом, от 5 до 5000):</label>
+        <input type="number" id="price-1h" min="5" max="5000" step="5">
+
+        <button onclick="saveSettings()">Сохранить настройки</button>
+    </div>
+
+    <div class="card">
+        <h3>Быстрые Действия</h3>
+        <button class="action" onclick="sendAction('add10')">+10 сом на баланс</button>
+        <div class="row">
+            <button class="danger" onclick="sendAction('reset_time')">Сброс времени</button>
+            <button class="danger" onclick="sendAction('reset_total')">Сброс кассы</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Подключение к Wi-Fi</h3>
+        <form action="/save" method="POST">
+            <label for="ssid">SSID (Название Wi-Fi):</label>
+            <input type="text" id="ssid" name="ssid" required>
+            <label for="pass">Пароль:</label>
+            <input type="password" id="pass" name="pass">
+            <button type="submit">Сохранить Wi-Fi и перезагрузить</button>
+        </form>
+    </div>
+
+<script>
+    async function updateStatus() {
+        try {
+            const res = await fetch('/api/status');
+            const data = await res.json();
+            
+            document.getElementById('balance-val').innerText = data.balance + ' сом';
+            document.getElementById('total-val').innerText = data.total_money + ' сом';
+            
+            const minElem = document.getElementById('min-start');
+            if (document.activeElement !== minElem) {
+                minElem.value = data.min_threshold;
+            }
+            
+            const priceElem = document.getElementById('price-1h');
+            if (document.activeElement !== priceElem) {
+                priceElem.value = data.price_per_1hour;
+            }
+
+            document.getElementById('relay-status').innerText = data.relay ? "ВКЛЮЧЕНО" : "ВЫКЛЮЧЕНО";
+            document.getElementById('relay-status').style.color = data.relay ? "#2ed573" : "#ff4757";
+        } catch(e) { console.error("Error fetching status", e); }
+    }
+
+    async function saveSettings() {
+        let minTh = parseInt(document.getElementById('min-start').value, 10);
+        let price = parseInt(document.getElementById('price-1h').value, 10);
+
+        if (isNaN(minTh) || minTh < 5 || minTh > 1000) {
+            alert('Мин. старт должен быть в пределах от 5 до 1000 сом!');
+            return;
+        }
+        if (isNaN(price) || price < 5 || price > 5000) {
+            alert('Цена за 1 час должна быть в пределах от 5 до 5000 сом!');
+            return;
+        }
+
+        await fetch('/api/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: `min_threshold=${minTh}&price_per_1hour=${price}`
+        });
+        alert('Настройки сохранены!');
+        updateStatus();
+    }
+
+    async function sendAction(actionName) {
+        if (actionName.startsWith('reset') && !confirm('Вы уверены?')) return;
+        await fetch('/api/action', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: `action=${actionName}`
+        });
+        updateStatus();
+    }
+
+    // Автообновление каждые 3 секунды
+    setInterval(updateStatus, 3000);
+    updateStatus();
+</script>
+</body>
+</html>

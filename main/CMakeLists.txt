@@ -14,6 +14,8 @@ idf_component_register(
         "Business_Logic"
         "Networking_Services"
         "Peripheral"
+    EMBED_FILES
+        "web/index.html"
     REQUIRES 
         esp-tls
         esp_event 

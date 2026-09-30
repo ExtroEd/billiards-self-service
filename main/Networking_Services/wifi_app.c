@@ -1,5 +1,6 @@
 #include "wifi_app.h"
 #include <string.h>
+#include <ctype.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -12,6 +13,7 @@
 #include "esp_netif.h"
 #include "esp_http_server.h"
 #include "lwip/sockets.h"
+#include "system_state.h"
 
 static const char *TAG = "WIFI_APP";
 
@@ -19,8 +21,12 @@ static const char *TAG = "WIFI_APP";
 #define NVS_KEY_SSID       "ssid"
 #define NVS_KEY_PASS       "pass"
 
-#define AP_SSID            "ESP32_Config_1"
+#define AP_SSID            "ESP32_Config"
 #define AP_PASS            "12345678"
+
+// Встроенный HTML
+extern const uint8_t index_html_start[] asm("_binary_index_html_start");
+extern const uint8_t index_html_end[]   asm("_binary_index_html_end");
 
 static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_CONNECTED_BIT BIT0
@@ -33,24 +39,10 @@ static esp_netif_t *s_netif_sta = NULL;
 static TaskHandle_t s_dns_task_handle = NULL;
 static int s_retry_num = 0;
 
-static const char *HTML_FORM = 
-    "<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-    "<style>body{font-family:Arial;background:#1a1a1a;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;}"
-    ".card{background:#2a2a2a;padding:25px;border-radius:12px;box-shadow:0 4px 10px rgba(0,0,0,0.5);width:85%;max-width:350px;}"
-    "h2{margin-top:0;color:#00d2ff;text-align:center;}input{width:100%;padding:10px;margin:8px 0 16px 0;border:none;border-radius:6px;box-sizing:border-box;}"
-    "button{width:100%;background:#00d2ff;color:#000;font-weight:bold;padding:12px;border:none;border-radius:6px;cursor:pointer;}"
-    "</style></head><body><div class=\"card\"><h2>Terminal Wi-Fi</h2>"
-    "<form action=\"/save\" method=\"POST\">"
-    "<label>SSID (Название Wi-Fi):</label><input type=\"text\" name=\"ssid\" required>"
-    "<label>Пароль:</label><input type=\"password\" name=\"pass\">"
-    "<button type=\"submit\">Сохранить и перезагрузить</button>"
-    "</form></div></body></html>";
-
-// --- ФУНКЦИЯ ДЕКОДИРОВАНИЯ URL (Спецсимволы и пробелы) ---
 static void url_decode(char *dst, const char *src) {
     char a, b;
     while (*src) {
-        if ((*src == '%') && ((a = src[1]) && (b = src[2])) && (isxdigit(a) && isxdigit(b))) {
+        if ((*src == '%') && ((a = src[1]) && (b = src[2])) && (isxdigit((unsigned char)a) && isxdigit((unsigned char)b))) {
             if (a >= 'a' && a <= 'f') a -= 'a' - 'A';
             if (a >= 'A' && a <= 'F') a -= ('A' - 10);
             else a -= '0';
@@ -69,7 +61,7 @@ static void url_decode(char *dst, const char *src) {
     *dst = '\0';
 }
 
-// --- DNS SERVER (CAPTIVE PORTAL TASK) ---
+// DNS Server
 static void dns_server_task(void *pvParameters) {
     uint8_t rx_buffer[128];
     struct sockaddr_in client_addr;
@@ -100,19 +92,17 @@ static void dns_server_task(void *pvParameters) {
     while (1) {
         int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer), 0, (struct sockaddr *)&client_addr, &client_addr_len);
         if (len > 12) {
-            // Формируем DNS-ответ: меняем флаги на Response (0x8400)
             rx_buffer[2] = 0x84;
             rx_buffer[3] = 0x00;
-            rx_buffer[6] = 0x00; rx_buffer[7] = 0x01; // Answer count = 1
+            rx_buffer[6] = 0x00; rx_buffer[7] = 0x01;
 
-            // Ответ: IP адрес AP (192.168.4.1)
             uint8_t answer[] = {
-                0xc0, 0x0c,             // Pointer to domain name
-                0x00, 0x01,             // Type A
-                0x00, 0x01,             // Class IN
-                0x00, 0x00, 0x00, 0x3c, // TTL 60 sec
-                0x00, 0x04,             // Data length 4
-                192, 168, 4, 1          // IP Address 192.168.4.1
+                0xc0, 0x0c,
+                0x00, 0x01,
+                0x00, 0x01,
+                0x00, 0x00, 0x00, 0x3c,
+                0x00, 0x04,
+                192, 168, 4, 1
             };
 
             if (len + sizeof(answer) <= sizeof(rx_buffer)) {
@@ -124,7 +114,7 @@ static void dns_server_task(void *pvParameters) {
     }
 }
 
-// --- NVS ---
+// NVS Функции
 esp_err_t wifi_app_save_credentials(const char *ssid, const char *pass) {
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
@@ -157,17 +147,24 @@ esp_err_t wifi_app_read_credentials(char *ssid_out, char *pass_out) {
     return err;
 }
 
-// --- HTTP HANDLERS ---
+// HTTP Обработчики
 static esp_err_t root_get_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/html");
-    httpd_resp_send(req, HTML_FORM, HTTPD_RESP_USE_STRLEN);
+    const size_t index_html_len = index_html_end - index_html_start;
+    httpd_resp_send(req, (const char *)index_html_start, index_html_len);
     return ESP_OK;
 }
 
-// Редирект для Captive Portal (302 Redirect)
 static esp_err_t redirect_handler(httpd_req_t *req) {
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
+
+// Быстрая пустышка для всех запросов иконки (сохраняет сокеты и ресурсы)
+static esp_err_t favicon_get_handler(httpd_req_t *req) {
+    httpd_resp_set_status(req, "204 No Content");
     httpd_resp_send(req, NULL, 0);
     return ESP_OK;
 }
@@ -192,8 +189,8 @@ static esp_err_t save_post_handler(httpd_req_t *req) {
     ESP_LOGI(TAG, "Received Credentials: SSID='%s'", ssid);
     wifi_app_save_credentials(ssid, pass);
 
-    const char *resp = "<html><body style=\"background:#1a1a1a;color:#fff;text-align:center;\">"
-                       "<h2>Saved! Restarting...</h2></body></html>";
+    const char *resp = "<!DOCTYPE html><html><body style=\"background:#1a1a1a;color:#fff;text-align:center;\">"
+                       "<h2>Сохранено! Перезагрузка...</h2></body></html>";
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
 
     vTaskDelay(pdMS_TO_TICKS(1500));
@@ -201,11 +198,68 @@ static esp_err_t save_post_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+static esp_err_t api_status_get_handler(httpd_req_t *req) {
+    httpd_resp_set_type(req, "application/json");
+
+    char json_resp[180];
+    snprintf(json_resp, sizeof(json_resp),
+             "{\"balance\":%d,\"total_money\":%ld,\"min_threshold\":%d,\"price_per_1hour\":%d,\"relay\":%s}",
+             system_state_get_balance(),
+             (long)system_state_get_total_money(),
+             system_state_get_min_threshold(),
+             system_state_get_price_per_1hour(),
+             system_state_is_relay_active() ? "true" : "false");
+
+    httpd_resp_send(req, json_resp, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static esp_err_t api_settings_post_handler(httpd_req_t *req) {
+    char buf[128] = {0};
+    int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (ret <= 0) return ESP_FAIL;
+
+    int min_th = -1, price = -1;
+    char *min_ptr = strstr(buf, "min_threshold=");
+    char *price_ptr = strstr(buf, "price_per_1hour=");
+
+    if (min_ptr) sscanf(min_ptr, "min_threshold=%d", &min_th);
+    if (price_ptr) sscanf(price_ptr, "price_per_1hour=%d", &price);
+
+    if (min_th >= 5 && min_th <= 1000) {
+        system_state_set_min_threshold(min_th);
+    }
+    if (price >= 5 && price <= 5000) {
+        system_state_set_price_per_1hour(price);
+    }
+
+    httpd_resp_send(req, "OK", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static esp_err_t api_action_post_handler(httpd_req_t *req) {
+    char buf[64] = {0};
+    int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (ret <= 0) return ESP_FAIL;
+
+    if (strstr(buf, "action=add10")) {
+        system_state_add_credit(10);
+    } else if (strstr(buf, "action=reset_time")) {
+        system_state_reset_balance();
+    } else if (strstr(buf, "action=reset_total")) {
+        system_state_reset_total_money();
+    }
+
+    httpd_resp_send(req, "OK", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
 static void start_web_server(void) {
     if (s_http_server != NULL) return;
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 8;
+    config.max_uri_handlers = 15;
+    config.lru_purge_enable = true; // Автоматически зарывает старые зависшие сокеты!
 
     if (httpd_start(&s_http_server, &config) == ESP_OK) {
         httpd_uri_t root_uri = { .uri = "/", .method = HTTP_GET, .handler = root_get_handler };
@@ -214,15 +268,44 @@ static void start_web_server(void) {
         httpd_uri_t save_uri = { .uri = "/save", .method = HTTP_POST, .handler = save_post_handler };
         httpd_register_uri_handler(s_http_server, &save_uri);
 
-        // Служебные URL для iOS / Android (отдаем главную страницу)
-        httpd_uri_t captive_uris[] = {
-            { .uri = "/generate_204", .method = HTTP_GET, .handler = redirect_handler },
-            { .uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = redirect_handler },
-            { .uri = "/canonical.html", .method = HTTP_GET, .handler = redirect_handler }
+        // API роуты
+        httpd_uri_t status_uri = { .uri = "/api/status", .method = HTTP_GET, .handler = api_status_get_handler };
+        httpd_register_uri_handler(s_http_server, &status_uri);
+
+        httpd_uri_t settings_uri = { .uri = "/api/settings", .method = HTTP_POST, .handler = api_settings_post_handler };
+        httpd_register_uri_handler(s_http_server, &settings_uri);
+
+        httpd_uri_t action_uri = { .uri = "/api/action", .method = HTTP_POST, .handler = api_action_post_handler };
+        httpd_register_uri_handler(s_http_server, &action_uri);
+
+        // Пустышка для favicon
+        httpd_uri_t favicon_uri = {
+            .uri      = "/favicon.ico",
+            .method   = HTTP_GET,
+            .handler  = favicon_get_handler,
+            .user_ctx = NULL
+        };
+        httpd_register_uri_handler(s_http_server, &favicon_uri);
+
+        // Captive portal URIs (для автоматического всплывающего окна авторизации)
+        const char *captive_paths[] = {
+            "/generate_204",
+            "/gen_204",
+            "/connecttest.txt",
+            "/redirect",
+            "/hotspot-detect.html",
+            "/canonical.html",
+            "/library/test/success.html"
         };
 
-        for (int i = 0; i < 3; i++) {
-            httpd_register_uri_handler(s_http_server, &captive_uris[i]);
+        for (size_t i = 0; i < sizeof(captive_paths) / sizeof(captive_paths[0]); i++) {
+            httpd_uri_t captive_uri = {
+                .uri      = captive_paths[i],
+                .method   = HTTP_GET,
+                .handler  = redirect_handler,
+                .user_ctx = NULL
+            };
+            httpd_register_uri_handler(s_http_server, &captive_uri);
         }
     }
 }
@@ -267,7 +350,6 @@ static void start_soft_ap(void) {
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    // Запуск HTTP и DNS Серверов
     start_web_server();
     if (s_dns_task_handle == NULL) {
         xTaskCreate(dns_server_task, "dns_task", 3072, NULL, 5, &s_dns_task_handle);
