@@ -17,6 +17,7 @@ idf_component_register(
     EMBED_FILES
         "web/index.html"
     REQUIRES 
+        cjson
         esp-tls
         esp_event 
         esp_wifi 

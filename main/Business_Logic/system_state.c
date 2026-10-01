@@ -1,5 +1,7 @@
 #include "system_state.h"
 #include <stdio.h>
+#include <time.h>
+#include <sys/time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -7,6 +9,8 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "cJSON.h"
+#include "esp_sntp.h"
 
 #include "Peripheral/display_tft.h"
 #include "Peripheral/display_7seg.h"
@@ -15,25 +19,44 @@ static const char *TAG_SYS = "SYSTEM_STATE";
 static const char *NVS_NAMESPACE = "storage";
 
 static int g_balance = 0;
-static int g_min_threshold_soms = 30; // 30 сом по умолчанию
-// По умолчанию: 180 сом за 1 час
-static int g_price_per_1hour = 180;
+static int g_min_threshold_soms = 1; // 1 сом по умолчанию
+static int g_price_per_1hour = 180;   // 180 сом за 1 час
 static int32_t g_total_money = 0;      // Касса
 static int g_remaining_seconds = 0;
 static bool g_relay_state = false;
 
 static SemaphoreHandle_t g_state_mutex = NULL;
 
-// Загрузка настроек из NVS
+// --- Инициализация NTP (Сетевого времени) ---
+void system_state_init_sntp(void) {
+    ESP_LOGI(TAG_SYS, "Инициализация SNTP...");
+    esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_setservername(1, "time.google.com");
+    esp_sntp_init();
+}
+
+// --- NVS: Сохранение оставшегося времени в секундах ---
+static void save_remaining_seconds_to_nvs(int seconds) {
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &my_handle);
+    if (err == ESP_OK) {
+        nvs_set_i32(my_handle, "rem_sec", seconds);
+        nvs_commit(my_handle);
+        nvs_close(my_handle);
+    }
+}
+
+// --- NVS: Загрузка настроек ---
 static void load_config_from_nvs(void) {
     nvs_handle_t my_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &my_handle);
     if (err == ESP_OK) {
         int32_t val32 = 0;
-        if (nvs_get_i32(my_handle, "min_thresh", &val32) == ESP_OK) {
+        if (nvs_get_i32(my_handle, "min_thresh", &val32) == ESP_OK && val32 >= 1) {
             g_min_threshold_soms = (int)val32;
         }
-        if (nvs_get_i32(my_handle, "price_1h", &val32) == ESP_OK) {
+        if (nvs_get_i32(my_handle, "price_1h", &val32) == ESP_OK && val32 >= 1) {
             g_price_per_1hour = (int)val32;
         }
         if (nvs_get_i32(my_handle, "total_cash", &val32) == ESP_OK) {
@@ -43,7 +66,7 @@ static void load_config_from_nvs(void) {
     }
 }
 
-// Сохранение настроек в NVS
+// --- NVS: Сохранение настроек ---
 static void save_config_to_nvs(void) {
     nvs_handle_t my_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &my_handle);
@@ -74,12 +97,15 @@ static void update_relay_state_unlocked(void) {
             g_relay_state = false;
             g_balance = 0;
             gpio_set_level(RELAY_GPIO_PIN, 0);
+            save_remaining_seconds_to_nvs(0); // Сбрасываем NVS
             ESP_LOGW(TAG_SYS, "Время истекло. РЕЛЕ ВЫКЛЮЧЕНО!");
         }
     }
 }
 
 static void timer_countdown_task(void *pvParameters) {
+    int save_counter = 0;
+
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
 
@@ -91,6 +117,12 @@ static void timer_countdown_task(void *pvParameters) {
                 display_7seg_show_time(g_remaining_seconds / 60, remaining_secs, (g_remaining_seconds % 2 == 0));
 
                 update_relay_state_unlocked();
+
+                // Сохраняем в NVS каждые 5 секунд (чтобы не изнашивать flash лишней записью)
+                if (++save_counter >= 5) {
+                    save_counter = 0;
+                    save_remaining_seconds_to_nvs(g_remaining_seconds);
+                }
             } else if (!g_relay_state) {
                 display_7seg_clear();
             }
@@ -113,7 +145,7 @@ void system_state_init(void) {
     g_remaining_seconds = 0;
     g_relay_state = false;
 
-    // Читаем сохраненные значения из NVS
+    // Читаем сохраненные настройки из NVS
     load_config_from_nvs();
 
     gpio_config_t io_conf = {
@@ -128,6 +160,22 @@ void system_state_init(void) {
 
     display_7seg_init();
 
+    // Устанавливаем часовой пояс (UTC+6)
+    setenv("TZ", "KGT-6", 1);
+    tzset();
+
+    // --- Восстановление оставшегося времени в секундах после перезагрузки ---
+    nvs_handle_t my_handle;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &my_handle) == ESP_OK) {
+        int32_t saved_seconds = 0;
+        if (nvs_get_i32(my_handle, "rem_sec", &saved_seconds) == ESP_OK && saved_seconds > 0) {
+            g_remaining_seconds = (int)saved_seconds;
+            update_relay_state_unlocked();
+            ESP_LOGI(TAG_SYS, "Сессия восстановлена! Осталось: %d сек.", g_remaining_seconds);
+        }
+        nvs_close(my_handle);
+    }
+
     xTaskCreate(timer_countdown_task, "timer_countdown_task", 2048, NULL, 5, NULL);
 
     ESP_LOGI(TAG_SYS, "Инициализация завершена. Порог: %d сом, Цена 1 час: %d сом", 
@@ -135,24 +183,40 @@ void system_state_init(void) {
 }
 
 void system_state_add_credit(int amount) {
-    if (amount <= 0) return;
+    if (amount <= 0) {
+        ESP_LOGW(TAG_SYS, "system_state_add_credit: Отклонено (сумма <= 0: %d)", amount);
+        return;
+    }
 
     if (xSemaphoreTake(g_state_mutex, portMAX_DELAY) == pdTRUE) {
+        ESP_LOGI(TAG_SYS, "--> [ADD CREDIT] Поступление: %d сом. Старый баланс: %d, Старая касса: %ld", 
+                 amount, g_balance, (long)g_total_money);
+
         g_balance += amount;
         g_total_money += amount;
 
-        save_config_to_nvs(); // Сохраняем кассу
+        save_config_to_nvs(); // Сохраняем кассу в NVS
 
         int added_seconds = convert_soms_to_seconds(amount);
+        ESP_LOGI(TAG_SYS, "--> [ADD CREDIT] Рассчитано добавочное время: %d сек. (за %d сом)", added_seconds, amount);
 
         if (!g_relay_state) {
+            ESP_LOGI(TAG_SYS, "--> [ADD CREDIT] Реле ВЫКЛ. Текущий баланс (%d) vs Порог (%d)", g_balance, g_min_threshold_soms);
             if (g_balance >= g_min_threshold_soms) {
                 g_remaining_seconds = convert_soms_to_seconds(g_balance);
+                ESP_LOGI(TAG_SYS, "--> [ADD CREDIT] Порог пройден! Старт таймера на %d сек.", g_remaining_seconds);
                 update_relay_state_unlocked();
+            } else {
+                ESP_LOGW(TAG_SYS, "--> [ADD CREDIT] Недостаточно средств для порога (%d < %d)", g_balance, g_min_threshold_soms);
             }
         } else {
             g_remaining_seconds += added_seconds;
-            ESP_LOGI(TAG_SYS, "Дозачисление! Новое время: %d сек.", g_remaining_seconds);
+            ESP_LOGI(TAG_SYS, "--> [ADD CREDIT] Дозачисление! Новое время: %d сек.", g_remaining_seconds);
+        }
+
+        // Сохраняем актуальный остаток в NVS
+        if (g_remaining_seconds > 0) {
+            save_remaining_seconds_to_nvs(g_remaining_seconds);
         }
 
         display_tft_wake();
@@ -165,6 +229,7 @@ void system_state_reset_balance(void) {
         g_balance = 0;
         g_remaining_seconds = 0;
         update_relay_state_unlocked();
+        save_remaining_seconds_to_nvs(0);
         display_7seg_clear();
         xSemaphoreGive(g_state_mutex);
     }
@@ -180,7 +245,7 @@ int system_state_get_balance(void) {
 }
 
 void system_state_set_min_threshold(int min_soms) {
-    if (min_soms < 0) return;
+    if (min_soms < 1) return;
 
     if (xSemaphoreTake(g_state_mutex, portMAX_DELAY) == pdTRUE) {
         g_min_threshold_soms = min_soms;
@@ -190,7 +255,7 @@ void system_state_set_min_threshold(int min_soms) {
 }
 
 int system_state_get_min_threshold(void) {
-    int threshold = 30;
+    int threshold = 1;
     if (xSemaphoreTake(g_state_mutex, portMAX_DELAY) == pdTRUE) {
         threshold = g_min_threshold_soms;
         xSemaphoreGive(g_state_mutex);
@@ -241,4 +306,53 @@ bool system_state_is_relay_active(void) {
         xSemaphoreGive(g_state_mutex);
     }
     return active;
+}
+
+void system_state_handle_mqtt_cmd(const char *topic, int topic_len, const char *data, int data_len) {
+    ESP_LOGI(TAG_SYS, "=== [MQTT CMD PARSER] Начало обработки сообщения ===");
+    ESP_LOGI(TAG_SYS, "Принятый топик: %.*s", topic_len, topic);
+    ESP_LOGI(TAG_SYS, "Сырое тело (Payload): %.*s", data_len, data);
+
+    char *json_buf = malloc(data_len + 1);
+    if (!json_buf) {
+        ESP_LOGE(TAG_SYS, "[ERROR] Не удалось выделить память под json_buf!");
+        return;
+    }
+    memcpy(json_buf, data, data_len);
+    json_buf[data_len] = '\0';
+
+    cJSON *root = cJSON_Parse(json_buf);
+    if (root != NULL) {
+        cJSON *event = cJSON_GetObjectItem(root, "event");
+        cJSON *amount = cJSON_GetObjectItem(root, "amount");
+
+        if (event && cJSON_IsString(event)) {
+            ESP_LOGI(TAG_SYS, "Поле 'event': '%s'", event->valuestring);
+        } else {
+            ESP_LOGW(TAG_SYS, "[WARN] Поле 'event' отсутствует или не является строкой");
+        }
+
+        if (amount && cJSON_IsNumber(amount)) {
+            ESP_LOGI(TAG_SYS, "Поле 'amount': %d", amount->valueint);
+        } else {
+            ESP_LOGW(TAG_SYS, "[WARN] Поле 'amount' отсутствует или не является числом");
+        }
+
+        if (event && cJSON_IsString(event) && (strcmp(event->valuestring, "PAYMENT_SUCCESS") == 0)) {
+            if (amount && cJSON_IsNumber(amount)) {
+                int credit = amount->valueint;
+                ESP_LOGI(TAG_SYS, ">>> УСПЕХ: Начисление зачислено из MQTT! Сумма: %d сом", credit);
+                system_state_add_credit(credit);
+            } else {
+                ESP_LOGE(TAG_SYS, "[ERROR] Событие PAYMENT_SUCCESS, но сумма 'amount' невалидна!");
+            }
+        } else {
+            ESP_LOGW(TAG_SYS, "[WARN] 'event' не равен 'PAYMENT_SUCCESS'. Пропуск обработки.");
+        }
+        cJSON_Delete(root);
+    } else {
+        ESP_LOGE(TAG_SYS, "[ERROR] cJSON_Parse не смог распарсить JSON! Ошибка синтаксиса.");
+    }
+    free(json_buf);
+    ESP_LOGI(TAG_SYS, "=== [MQTT CMD PARSER] Завершение обработки ===");
 }

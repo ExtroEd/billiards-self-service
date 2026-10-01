@@ -11,8 +11,9 @@
 #define MQTT_PASS           SECRET_MQTT_PASS
 
 // Топики управления и телеметрии
-#define MQTT_TOPIC_CMD      "billiards/table_1/cmd"      // Прием команд (от Cloudflare/админки)
-#define MQTT_TOPIC_STATUS   "billiards/table_1/status"   // Отправка статуса и баланса
+#define TABLE_ID 4
+#define MQTT_TOPIC_CMD    "billiards/klubnyy15_table4/#"
+#define MQTT_TOPIC_STATUS "billiards/klubnyy15_table4/status"
 
 /**
  * @brief Инициализация и запуск MQTT клиента

@@ -62,4 +62,6 @@ void system_state_reset_total_money(void);
  */
 bool system_state_is_relay_active(void);
 
+void system_state_init_sntp(void);
+
 #endif // SYSTEM_STATE_H

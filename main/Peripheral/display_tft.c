@@ -23,7 +23,8 @@ static int64_t s_last_activity_time = 0;
 typedef enum {
     UI_STATE_MENU_NAV,   
     UI_STATE_MENU_EDIT,
-    UI_STATE_SHOW_QR
+    UI_STATE_SHOW_QR,
+    UI_STATE_SHOW_CASH
 } ui_state_t;
 
 // Начальное состояние теперь сразу Меню
@@ -152,11 +153,34 @@ void display_tft_set_backlight(bool enable) {
     s_is_awake = enable;
 }
 
+static void render_cash_screen(void) {
+    display_tft_fill_screen(COLOR_BLACK);
+    
+    // Заголовок
+    display_tft_fill_rect(0, 0, 128, 16, COLOR_BLUE);
+    display_tft_draw_string(24, 4, "Касса всего", COLOR_WHITE, COLOR_BLUE);
+
+    // Подложка под сумму
+    display_tft_fill_rect(8, 35, 112, 45, COLOR_DARKGRAY);
+
+    // Формируем строку с суммой
+    char cash_str[32];
+    snprintf(cash_str, sizeof(cash_str), "%ld сом", (long)system_state_get_total_money());
+
+    // Вывод суммы
+    display_tft_draw_string(14, 52, cash_str, COLOR_GREEN, COLOR_DARKGRAY);
+
+    // Подсказка для выхода
+    display_tft_draw_string(8, 100, "Нажми для выхода", COLOR_WHITE, COLOR_BLACK);
+}
+
 void display_tft_wake(void) {
     s_last_activity_time = esp_timer_get_time();
     if (!s_is_awake) {
         display_tft_set_backlight(true);
-        if (s_ui_state != UI_STATE_SHOW_QR) {
+        if (s_ui_state == UI_STATE_SHOW_CASH) {
+            render_cash_screen();
+        } else if (s_ui_state != UI_STATE_SHOW_QR) {
             render_menu();
         }
     }
@@ -297,7 +321,8 @@ static void render_menu(void) {
 void menu_process_event(encoder_event_t event) {
     display_tft_wake();
 
-    if (s_ui_state == UI_STATE_SHOW_QR) {
+    // 1. Возврат в меню из режима просмотра QR-кода или экрана кассы
+    if (s_ui_state == UI_STATE_SHOW_QR || s_ui_state == UI_STATE_SHOW_CASH) {
         if (event == ENCODER_EVENT_CLICK || event == ENCODER_EVENT_LONG_PRESS) {
             s_ui_state = UI_STATE_MENU_NAV;
             render_menu();
@@ -333,6 +358,11 @@ void menu_process_event(encoder_event_t event) {
             } else if (s_selected_item == 1 || s_selected_item == 2) {
                 // Мин. старт или Цена за 1 час
                 s_ui_state = UI_STATE_MENU_EDIT;
+            } else if (s_selected_item == 3) {
+                // 4. Касса всего - Показываем отдельный экран
+                s_ui_state = UI_STATE_SHOW_CASH;
+                render_cash_screen();
+                return;
             } else if (s_selected_item == 4) {
                 // Сброс кассы
                 system_state_reset_total_money();
@@ -349,8 +379,12 @@ void menu_process_event(encoder_event_t event) {
     else if (s_ui_state == UI_STATE_MENU_EDIT) {
         if (s_selected_item == 1) {
             int th = system_state_get_min_threshold();
-            if (event == ENCODER_EVENT_UP && th < 1000) system_state_set_min_threshold(th + 5);
-            if (event == ENCODER_EVENT_DOWN && th >= 5) system_state_set_min_threshold(th - 5);
+            if (event == ENCODER_EVENT_UP && th < 1000) {
+                system_state_set_min_threshold(th + 1);
+            }
+            if (event == ENCODER_EVENT_DOWN && th > 1) {
+                system_state_set_min_threshold(th - 1);
+            }
         } else if (s_selected_item == 2) {
             int price = system_state_get_price_per_1hour();
             if (event == ENCODER_EVENT_UP && price < 5000) system_state_set_price_per_1hour(price + 5);

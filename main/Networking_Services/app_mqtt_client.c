@@ -41,9 +41,11 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         break;
 
     case MQTT_EVENT_DATA:
-        ESP_LOGI(TAG, "Получены данные из MQTT:");
-        ESP_LOGI(TAG, "TOPIC=%.*s", event->topic_len, event->topic);
-        ESP_LOGI(TAG, "DATA=%.*s", event->data_len, event->data);
+        ESP_LOGI(TAG, "===============================================");
+        ESP_LOGI(TAG, ">>> [MQTT RX] Получены данные из HiveMQ!");
+        ESP_LOGI(TAG, ">>> Topic (длина %d): %.*s", event->topic_len, event->topic_len, event->topic);
+        ESP_LOGI(TAG, ">>> Payload (длина %d): %.*s", event->data_len, event->data_len, event->data);
+        ESP_LOGI(TAG, "===============================================");
 
         // Передаем полученную команду в главную логику системы
         system_state_handle_mqtt_cmd(event->topic, event->topic_len, event->data, event->data_len);

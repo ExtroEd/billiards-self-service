@@ -1,3 +1,5 @@
+#include "app_mqtt_client.h"
+#include "secrets.h"
 #include "wifi_app.h"
 #include <string.h>
 #include <ctype.h>
@@ -315,14 +317,27 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (s_retry_num < 5) {
+        // Увеличим количество попыток переподключения до 10
+        if (s_retry_num < 10) {
+            vTaskDelay(pdMS_TO_TICKS(500)); // Небольшая пауза перед повтором
             esp_wifi_connect();
             s_retry_num++;
+            ESP_LOGW(TAG, "Попытка переподключения к Wi-Fi #%d...", s_retry_num);
         } else {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        ESP_LOGI(TAG, "Успешно получен IP-адрес: " IPSTR, IP2STR(&event->ip_info.ip));
+        
         s_retry_num = 0;
+        
+        system_state_init_sntp();
+        
+        // 2. ЗАПУСКАЕМ MQTT КЛИЕНТ
+        ESP_LOGI(TAG, "Запуск MQTT клиента...");
+        mqtt_app_start();
+        
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
@@ -357,7 +372,14 @@ static void start_soft_ap(void) {
 }
 
 static bool connect_to_saved_wifi(const char *ssid, const char *pass) {
-    s_wifi_event_group = xEventGroupCreate();
+    if (s_wifi_event_group == NULL) {
+        s_wifi_event_group = xEventGroupCreate();
+    } else {
+        // Очищаем старые биты перед новым подключением
+        xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
+    }
+
+    s_retry_num = 0; // ОБЯЗАТЕЛЬНО сбрасываем счетчик повторов!
 
     if (s_netif_sta == NULL) {
         s_netif_sta = esp_netif_create_default_wifi_sta();
@@ -371,14 +393,16 @@ static bool connect_to_saved_wifi(const char *ssid, const char *pass) {
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
+    // Увеличиваем таймаут до 20 секунд (20000 мс) для мобильных точек доступа
     EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
             WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-            pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
+            pdFALSE, pdFALSE, pdMS_TO_TICKS(20000));
 
     if (bits & WIFI_CONNECTED_BIT) {
         s_current_mode = WIFI_APP_MODE_STA;
         return true;
     }
+    
     return false;
 }
 
@@ -400,12 +424,25 @@ void wifi_app_init(void) {
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, NULL));
 
     char ssid[32] = {0}, pass[64] = {0};
+
+    // 1. Попытка прочитать сохраненные настройки из NVS
     if (wifi_app_read_credentials(ssid, pass) == ESP_OK && strlen(ssid) > 0) {
+        ESP_LOGI(TAG, "Найдены настройки Wi-Fi в NVS: %s", ssid);
         if (!connect_to_saved_wifi(ssid, pass)) {
+            ESP_LOGW(TAG, "Не удалось подключиться к сохраненной сети NVS. Запуск SoftAP...");
             start_soft_ap();
         }
     } else {
-        start_soft_ap();
+        // 2. Если в NVS ничего нет — пробуем использовать значения по умолчанию из secrets.h
+        ESP_LOGI(TAG, "Настройки NVS пустые. Пробуем сети по умолчанию из secrets.h (%s)...", SECRET_WIFI_SSID);
+        
+        if (connect_to_saved_wifi(SECRET_WIFI_SSID, SECRET_WIFI_PASS)) {
+            ESP_LOGI(TAG, "Успешное подключение по умолчанию! Сохраняем в NVS...");
+            wifi_app_save_credentials(SECRET_WIFI_SSID, SECRET_WIFI_PASS);
+        } else {
+            ESP_LOGW(TAG, "Не удалось подключиться к дефолтной сети. Запуск SoftAP...");
+            start_soft_ap();
+        }
     }
 }
 
