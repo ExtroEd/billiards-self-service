@@ -1,4 +1,5 @@
 #include "app_mqtt_client.h"
+#include "display_tft.h"
 #include "secrets.h"
 #include "wifi_app.h"
 #include <string.h>
@@ -316,17 +317,26 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        // Увеличим количество попыток переподключения до 10
+    } 
+    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STACONNECTED) {
+        wifi_event_ap_staconnected_t* event = (wifi_event_ap_staconnected_t*) event_data;
+        ESP_LOGI(TAG, "Смартфон подключился к SoftAP (AID: %d). Рисуем QR сайта...", event->aid);
+
+        // Переключаем экран на QR-код сайта с синей шапкой САЙТ
+        display_tft_wake();
+        display_tft_show_qr_payload("http://192.168.4.1/", "САЙТ");
+    }
+    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         if (s_retry_num < 10) {
-            vTaskDelay(pdMS_TO_TICKS(500)); // Небольшая пауза перед повтором
+            vTaskDelay(pdMS_TO_TICKS(500));
             esp_wifi_connect();
             s_retry_num++;
             ESP_LOGW(TAG, "Попытка переподключения к Wi-Fi #%d...", s_retry_num);
         } else {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         }
-    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+    } 
+    else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "Успешно получен IP-адрес: " IPSTR, IP2STR(&event->ip_info.ip));
         
@@ -334,7 +344,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         
         system_state_init_sntp();
         
-        // 2. ЗАПУСКАЕМ MQTT КЛИЕНТ
         ESP_LOGI(TAG, "Запуск MQTT клиента...");
         mqtt_app_start();
         

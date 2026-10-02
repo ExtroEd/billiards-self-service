@@ -133,3 +133,52 @@ void display_7seg_show_number(int value) {
 
     display_7seg_show_time(minutes, seconds, false);
 }
+
+// Структура одного кадра змейки (активный сегмент + разряд 0..3)
+typedef struct {
+    uint8_t digit;
+    uint8_t segment;
+} snake_frame_t;
+
+// 12 шагов по внешнему контуру индикатора
+static const snake_frame_t snake_path[] = {
+    {0, 0x01}, // Разряд 0: Верх (a)
+    {1, 0x01}, // Разряд 1: Верх (a)
+    {2, 0x01}, // Разряд 2: Верх (a)
+    {3, 0x01}, // Разряд 3: Верх (a)
+    {3, 0x02}, // Разряд 3: Право-Верх (b)
+    {3, 0x04}, // Разряд 3: Право-Низ (c)
+    {3, 0x08}, // Разряд 3: Низ (d)
+    {2, 0x08}, // Разряд 2: Низ (d)
+    {1, 0x08}, // Разряд 1: Низ (d)
+    {0, 0x08}, // Разряд 0: Низ (d)
+    {0, 0x10}, // Разряд 0: Лево-Низ (e)
+    {0, 0x20}  // Разряд 0: Лево-Верх (f)
+};
+
+static uint8_t s_snake_step = 0;
+
+void display_7seg_snake_step(void) {
+    uint8_t raw_data[4] = {0, 0, 0, 0};
+    
+    // Включаем нужный сегмент на нужной цифре
+    raw_data[snake_path[s_snake_step].digit] = snake_path[s_snake_step].segment;
+
+    // Переходим к следующему шагу
+    s_snake_step = (s_snake_step + 1) % (sizeof(snake_path) / sizeof(snake_path[0]));
+
+    tm1637_start();
+    tm1637_write_byte(0x40);
+    tm1637_stop();
+
+    tm1637_start();
+    tm1637_write_byte(0xC0);
+    for (int i = 0; i < 4; i++) {
+        tm1637_write_byte(raw_data[i]);
+    }
+    tm1637_stop();
+
+    tm1637_start();
+    tm1637_write_byte(0x88 | s_brightness);
+    tm1637_stop();
+}

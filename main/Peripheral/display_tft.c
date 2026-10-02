@@ -343,17 +343,8 @@ void menu_process_event(encoder_event_t event) {
                 ESP_LOGI(TAG, "Открытие QR-кода для настройки Wi-Fi...");
                 wifi_app_start_ap_mode(); 
 
-                const char *qr_payload = "WIFI:S:ESP32_Config;T:WPA;P:12345678;;";
-                esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
-                cfg.display_func = qrcode_display_cb;
-                cfg.max_qrcode_version = 10;
-
-                esp_err_t err = esp_qrcode_generate(&cfg, qr_payload);
-                if (err == ESP_OK) {
-                    s_ui_state = UI_STATE_SHOW_QR;
-                } else {
-                    ESP_LOGE(TAG, "Ошибка генерации QR-кода: %d", err);
-                }
+                // Отображаем заголовок ВАЙ-ФАЙ
+                display_tft_show_qr_payload("WIFI:S:ESP32_Config;T:WPA;P:12345678;;", "ВАЙ-ФАЙ");
                 return;
             } else if (s_selected_item == 1 || s_selected_item == 2) {
                 // Мин. старт или Цена за 1 час
@@ -446,6 +437,9 @@ void display_tft_init(void) {
     ESP_LOGI(TAG, "ST7735 initialized successfully with Menu screen.");
 }
 
+// Сохраняем текущий заголовок QR-экрана
+static char s_qr_current_title[32] = {0};
+
 void display_tft_draw_qrcode(esp_qrcode_handle_t qrcode, uint8_t scale) {
     if (!qrcode) return;
 
@@ -457,11 +451,22 @@ void display_tft_draw_qrcode(esp_qrcode_handle_t qrcode, uint8_t scale) {
         return;
     }
 
+    // Центрируем QR по горизонтали, а по вертикали сдвигаем вниз от синей плашки (от 22px)
     int16_t start_x = (DISPLAY_WIDTH - qr_size_px) / 2;
-    int16_t start_y = (DISPLAY_HEIGHT - qr_size_px) / 2;
+    int16_t start_y = 22 + ((DISPLAY_HEIGHT - 22 - 20 - qr_size_px) / 2);
 
     display_tft_fill_screen(COLOR_WHITE);
 
+    // 1. Отрисовка синего заголовка сверху
+    if (s_qr_current_title[0] != '\0') {
+        display_tft_fill_rect(0, 0, DISPLAY_WIDTH, 16, COLOR_BLUE);
+        int len = strlen(s_qr_current_title);
+        int text_x = (DISPLAY_WIDTH - (len * 6)) / 2;
+        if (text_x < 0) text_x = 0;
+        display_tft_draw_string(text_x, 4, s_qr_current_title, COLOR_WHITE, COLOR_BLUE);
+    }
+
+    // 2. Отрисовка модулей QR-кода
     for (uint8_t y = 0; y < qr_size; y++) {
         for (uint8_t x = 0; x < qr_size; x++) {
             if (esp_qrcode_get_module(qrcode, x, y)) {
@@ -474,6 +479,30 @@ void display_tft_draw_qrcode(esp_qrcode_handle_t qrcode, uint8_t scale) {
                 );
             }
         }
+    }
+
+    // 3. Подсказка снизу
+    display_tft_draw_string(14, 146, "Нажми для вых.", COLOR_DARKGRAY, COLOR_WHITE);
+}
+
+void display_tft_show_qr_payload(const char *payload, const char *title) {
+    s_ui_state = UI_STATE_SHOW_QR;
+
+    // Сохраняем заголовок
+    if (title) {
+        strncpy(s_qr_current_title, title, sizeof(s_qr_current_title) - 1);
+        s_qr_current_title[sizeof(s_qr_current_title) - 1] = '\0';
+    } else {
+        s_qr_current_title[0] = '\0';
+    }
+
+    esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
+    cfg.display_func = qrcode_display_cb;
+    cfg.max_qrcode_version = 10;
+
+    esp_err_t err = esp_qrcode_generate(&cfg, payload);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Ошибка генерации QR (%s): %d", payload, err);
     }
 }
 

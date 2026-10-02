@@ -27,6 +27,11 @@ void display_7seg_show_time(int minutes, int seconds, bool show_colon);
 void display_7seg_show_number(int value);
 
 /**
+ * @brief Выполнить один шаг анимации "Змейка" по периметру
+ */
+void display_7seg_snake_step(void);
+
+/**
  * @brief Очистить индикатор
  */
 void display_7seg_clear(void);

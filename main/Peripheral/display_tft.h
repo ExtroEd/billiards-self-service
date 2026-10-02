@@ -45,4 +45,11 @@ void display_tft_tick(void);
 void display_tft_sleep(void);
 void display_tft_draw_qrcode(esp_qrcode_handle_t qrcode, uint8_t scale);
 
+/**
+ * @brief Отобразить QR-код на весь экран с заголовком
+ * @param payload Строка данные для QR (WIFI:... или URL)
+ * @param title Текст сверху (например "1.Вай-Фай" или "2.Открыть сайт")
+ */
+void display_tft_show_qr_payload(const char *payload, const char *title);
+
 #endif // DISPLAY_TFT_H

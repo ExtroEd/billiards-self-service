@@ -74,6 +74,8 @@ esp_err_t mqtt_app_start(void)
                 .password = MQTT_PASS,
             },
         },
+        .task.stack_size = 6144, // <--- УВЕЛИЧЕНО ДЛЯ ИЗБЕЖАНИЯ STACK OVERFLOW
+        .task.priority = 5,
     };
 
     s_client = esp_mqtt_client_init(&mqtt_cfg);
@@ -82,10 +84,7 @@ esp_err_t mqtt_app_start(void)
         return ESP_FAIL;
     }
 
-    /* Регистрация обработчика событий */
     esp_mqtt_client_register_event(s_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
-    
-    /* Запуск фоновой задачи MQTT */
     return esp_mqtt_client_start(s_client);
 }
 
