@@ -17,6 +17,7 @@
 #include "esp_http_server.h"
 #include "lwip/sockets.h"
 #include "system_state.h"
+#include "Networking_Services/tg_bot.h"
 
 static const char *TAG = "WIFI_APP";
 
@@ -346,7 +347,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         
         ESP_LOGI(TAG, "Запуск MQTT клиента...");
         mqtt_app_start();
-        
+
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }

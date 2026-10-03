@@ -2,15 +2,19 @@
 #include <stdio.h>
 #include <time.h>
 #include <sys/time.h>
+#include <string.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "cJSON.h"
 #include "esp_sntp.h"
+#include "Networking_Services/tg_bot.h"
 
 #include "Peripheral/display_tft.h"
 #include "Peripheral/display_7seg.h"
@@ -26,6 +30,11 @@ static int g_remaining_seconds = 0;
 static bool g_relay_state = false;
 
 static SemaphoreHandle_t g_state_mutex = NULL;
+static QueueHandle_t g_mqtt_cmd_queue = NULL;
+
+typedef struct {
+    char payload[512];
+} mqtt_cmd_msg_t;
 
 // --- Инициализация NTP (Сетевого времени) ---
 void system_state_init_sntp(void) {
@@ -55,7 +64,7 @@ static void load_config_from_nvs(void) {
     }
 }
 
-// --- NVS: Сохранение настроек и кассы (Вызывается ВНЕ мьютекса!) ---
+// --- NVS: Сохранение настроек и кассы ---
 static void save_config_to_nvs(int32_t total_cash) {
     nvs_handle_t my_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &my_handle);
@@ -95,14 +104,12 @@ static void timer_countdown_task(void *pvParameters) {
     uint32_t ticks_counter = 0;
 
     while (1) {
-        // Задержка 150 миллисекунд для плавной анимации змейки
         vTaskDelay(pdMS_TO_TICKS(150));
 
-        if (xSemaphoreTake(g_state_mutex, portMAX_DELAY) == pdTRUE) {
+        if (xSemaphoreTake(g_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
             if (g_relay_state && g_remaining_seconds > 0) {
                 ticks_counter++;
 
-                // Каждые ~1000 мс (150 мс * 7 = 1050 мс ≈ 1 секунда)
                 if (ticks_counter >= 7) {
                     ticks_counter = 0;
                     g_remaining_seconds--;
@@ -113,11 +120,54 @@ static void timer_countdown_task(void *pvParameters) {
                     update_relay_state_unlocked();
                 }
             } else if (!g_relay_state) {
-                // Если стол выключен — делаем один шаг анимации змейки
                 ticks_counter = 0;
                 display_7seg_snake_step();
             }
             xSemaphoreGive(g_state_mutex);
+        }
+    }
+}
+
+// Фоновая задача обработки парсинга JSON
+static void mqtt_cmd_worker_task(void *pvParameters) {
+    mqtt_cmd_msg_t msg;
+
+    while (1) {
+        if (xQueueReceive(g_mqtt_cmd_queue, &msg, portMAX_DELAY) == pdTRUE) {
+            ESP_LOGI(TAG_SYS, "=== [MQTT WORKER] Разбор входящего сообщения ===");
+
+            cJSON *root = cJSON_Parse(msg.payload);
+            if (root != NULL) {
+                cJSON *event = cJSON_GetObjectItem(root, "event");
+
+                if (event && cJSON_IsString(event)) {
+                    if (strcmp(event->valuestring, "PAYMENT_SUCCESS") == 0) {
+                        cJSON *amount = cJSON_GetObjectItem(root, "amount");
+                        if (amount && cJSON_IsNumber(amount)) {
+                            int credit = amount->valueint;
+                            ESP_LOGI(TAG_SYS, ">>> УСПЕХ: Начисление зачислено из MQTT! Сумма: %d сом", credit);
+                            system_state_add_credit(credit);
+                        } else {
+                            ESP_LOGE(TAG_SYS, "[ERROR] Событие PAYMENT_SUCCESS, но сумма 'amount' невалидна!");
+                        }
+                    } else if (strcmp(event->valuestring, "REQUEST_STATUS") == 0) {
+                        cJSON *req_by = cJSON_GetObjectItem(root, "requestedBy");
+                        if (req_by && cJSON_IsString(req_by)) {
+                            ESP_LOGI(TAG_SYS, ">>> Запрос отчёта в Telegram для Chat ID: %s", req_by->valuestring);
+                            tg_bot_send_status_report(req_by->valuestring);
+                        } else {
+                            ESP_LOGE(TAG_SYS, "[ERROR] Событие REQUEST_STATUS, но 'requestedBy' отсутствует!");
+                        }
+                    } else {
+                        ESP_LOGW(TAG_SYS, "[WARN] Неизвестное событие: %s", event->valuestring);
+                    }
+                } else {
+                    ESP_LOGW(TAG_SYS, "[WARN] В MQTT сообщении отсутствует поле 'event'.");
+                }
+                cJSON_Delete(root);
+            } else {
+                ESP_LOGE(TAG_SYS, "[ERROR] cJSON_Parse не смог распарсить JSON!");
+            }
         }
     }
 }
@@ -131,6 +181,8 @@ void system_state_init(void) {
     ESP_ERROR_CHECK(ret);
 
     g_state_mutex = xSemaphoreCreateMutex();
+    g_mqtt_cmd_queue = xQueueCreate(5, sizeof(mqtt_cmd_msg_t));
+
     g_balance = 0;
     g_remaining_seconds = 0;
     g_relay_state = false;
@@ -153,6 +205,7 @@ void system_state_init(void) {
     tzset();
 
     xTaskCreate(timer_countdown_task, "timer_countdown_task", 3072, NULL, 5, NULL);
+    xTaskCreate(mqtt_cmd_worker_task, "mqtt_cmd_worker", 4096, NULL, 4, NULL);
 
     ESP_LOGI(TAG_SYS, "Инициализация завершена. Порог: %d сом, Цена 1 час: %d сом", 
              g_min_threshold_soms, g_price_per_1hour);
@@ -191,12 +244,10 @@ void system_state_add_credit(int amount) {
         }
 
         current_total_cash = g_total_money;
-
-        display_tft_wake();
         xSemaphoreGive(g_state_mutex);
     }
 
-    // Сохранение кассы в NVS строго вне мьютекса!
+    display_tft_wake();
     save_config_to_nvs(current_total_cash);
 }
 
@@ -290,37 +341,13 @@ bool system_state_is_relay_active(void) {
 }
 
 void system_state_handle_mqtt_cmd(const char *topic, int topic_len, const char *data, int data_len) {
-    ESP_LOGI(TAG_SYS, "=== [MQTT CMD PARSER] Начало обработки ===");
+    if (!g_mqtt_cmd_queue || data_len <= 0) return;
 
-    char *json_buf = malloc(data_len + 1);
-    if (!json_buf) {
-        ESP_LOGE(TAG_SYS, "[ERROR] Не удалось выделить память под json_buf!");
-        return;
-    }
-    memcpy(json_buf, data, data_len);
-    json_buf[data_len] = '\0';
+    mqtt_cmd_msg_t msg;
+    int copy_len = data_len < sizeof(msg.payload) - 1 ? data_len : sizeof(msg.payload) - 1;
+    memcpy(msg.payload, data, copy_len);
+    msg.payload[copy_len] = '\0';
 
-    cJSON *root = cJSON_Parse(json_buf);
-    free(json_buf); // Освобождаем память сразу
-
-    if (root != NULL) {
-        cJSON *event = cJSON_GetObjectItem(root, "event");
-        cJSON *amount = cJSON_GetObjectItem(root, "amount");
-
-        if (event && cJSON_IsString(event) && (strcmp(event->valuestring, "PAYMENT_SUCCESS") == 0)) {
-            if (amount && cJSON_IsNumber(amount)) {
-                int credit = amount->valueint;
-                ESP_LOGI(TAG_SYS, ">>> УСПЕХ: Начисление зачислено из MQTT! Сумма: %d сом", credit);
-                system_state_add_credit(credit);
-            } else {
-                ESP_LOGE(TAG_SYS, "[ERROR] Событие PAYMENT_SUCCESS, но сумма 'amount' невалидна!");
-            }
-        } else {
-            ESP_LOGW(TAG_SYS, "[WARN] Неизвестное событие или отсутствие полей.");
-        }
-        cJSON_Delete(root);
-    } else {
-        ESP_LOGE(TAG_SYS, "[ERROR] cJSON_Parse не смог распарсить JSON!");
-    }
-    ESP_LOGI(TAG_SYS, "=== [MQTT CMD PARSER] Завершение обработки ===");
+    // Мгновенная отправка в очередь без блокировки MQTT-клиента
+    xQueueSend(g_mqtt_cmd_queue, &msg, 0);
 }

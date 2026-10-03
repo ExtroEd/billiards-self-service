@@ -5,14 +5,14 @@
 #include "esp_err.h"
 #include "secrets.h"
 
-// Конфигурация HiveMQ Cloud
+// Конфигурация EMQX Cloud
 #define MQTT_BROKER_URI     SECRET_MQTT_BROKER_URI
 #define MQTT_USER           SECRET_MQTT_USER
 #define MQTT_PASS           SECRET_MQTT_PASS
 
 // Топики управления и телеметрии
 #define TABLE_ID 4
-#define MQTT_TOPIC_CMD    "billiards/klubnyy15_table4/#"
+#define MQTT_TOPIC_CMD    "billiards/klubnyy15_table4/cmd"
 #define MQTT_TOPIC_STATUS "billiards/klubnyy15_table4/status"
 
 /**
@@ -27,8 +27,6 @@ bool mqtt_app_is_connected(void);
 
 /**
  * @brief Отправка состояния/телеметрии на брокер
- * 
- * @param payload Текст сообщения (например, JSON или просто число)
  */
 esp_err_t mqtt_app_publish_status(const char *payload);
 

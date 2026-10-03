@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "Networking_Services/wifi_app.h"
+#include "Networking_Services/app_mqtt_client.h"
 #include "qr_code.h"
 #include "qrcode.h"
 #include "system_state.h"
@@ -24,7 +25,8 @@ typedef enum {
     UI_STATE_MENU_NAV,   
     UI_STATE_MENU_EDIT,
     UI_STATE_SHOW_QR,
-    UI_STATE_SHOW_CASH
+    UI_STATE_SHOW_CASH,
+    UI_STATE_SHOW_STATS
 } ui_state_t;
 
 // Начальное состояние теперь сразу Меню
@@ -34,7 +36,7 @@ static int8_t s_selected_item = 0;
 static void render_menu(void);
 static void qrcode_display_cb(esp_qrcode_handle_t qrcode);
 
-#define MENU_ITEMS_COUNT 7
+#define MENU_ITEMS_COUNT 8
 #define VISIBLE_MENU_ITEMS 6 
 
 static const char *MENU_LABELS[MENU_ITEMS_COUNT] = {
@@ -44,7 +46,8 @@ static const char *MENU_LABELS[MENU_ITEMS_COUNT] = {
     "4.Касса всего",
     "5.Сбр. кассы",
     "6.Сбр. времени",
-    "7.+10 сом"
+    "7.+10 сом",
+    "8.Статистика"
 };
 
 // Шрифт 5x7: ASCII (0..32) + Кириллица А-Я (33..65)
@@ -172,6 +175,43 @@ static void render_cash_screen(void) {
 
     // Подсказка для выхода
     display_tft_draw_string(8, 100, "Нажми для выхода", COLOR_WHITE, COLOR_BLACK);
+}
+
+static void render_stats_screen(void) {
+    display_tft_fill_screen(COLOR_BLACK);
+
+    // Синий заголовок
+    display_tft_fill_rect(0, 0, 128, 16, COLOR_BLUE);
+    display_tft_draw_string(20, 4, "Статистика", COLOR_WHITE, COLOR_BLUE);
+
+    // 1. Uptime (из ОЗУ: Дни, Часы, Минуты)
+    int64_t uptime_sec = esp_timer_get_time() / 1000000LL;
+    int days = (int)(uptime_sec / 86400);
+    int hours = (int)((uptime_sec % 86400) / 3600);
+    int mins = (int)((uptime_sec % 3600) / 60);
+
+    // Первая строка: Заголовок
+    display_tft_draw_string(4, 25, "Аптайм (Д:Ч:М):", COLOR_YELLOW, COLOR_BLACK);
+    
+    // Вторая строка: Сам счетчик (например, 2д 05ч 14м)
+    char uptime_str[32];
+    snprintf(uptime_str, sizeof(uptime_str), "%dд %02dч %02dм", days, hours, mins);
+    display_tft_draw_string(4, 38, uptime_str, COLOR_YELLOW, COLOR_BLACK);
+
+    // 2. Статус Wi-Fi
+    bool wifi_ok = (wifi_app_get_mode() == WIFI_APP_MODE_STA);
+    display_tft_draw_string(4, 60, "Вай-Фай:", COLOR_WHITE, COLOR_BLACK);
+    display_tft_draw_string(52, 60, wifi_ok ? "Работает" : "Нет связи", 
+                            wifi_ok ? COLOR_GREEN : COLOR_RED, COLOR_BLACK);
+
+    // 3. Статус EMQX Брокера
+    bool mqtt_ok = mqtt_app_is_connected();
+    display_tft_draw_string(4, 80, "Брокер:", COLOR_WHITE, COLOR_BLACK);
+    display_tft_draw_string(52, 80, mqtt_ok ? "Работает" : "Нет связи", 
+                            mqtt_ok ? COLOR_GREEN : COLOR_RED, COLOR_BLACK);
+
+    // Подсказка снизу
+    display_tft_draw_string(8, 140, "Нажми для выхода", COLOR_DARKGRAY, COLOR_BLACK);
 }
 
 void display_tft_wake(void) {
@@ -322,7 +362,7 @@ void menu_process_event(encoder_event_t event) {
     display_tft_wake();
 
     // 1. Возврат в меню из режима просмотра QR-кода или экрана кассы
-    if (s_ui_state == UI_STATE_SHOW_QR || s_ui_state == UI_STATE_SHOW_CASH) {
+    if (s_ui_state == UI_STATE_SHOW_QR || s_ui_state == UI_STATE_SHOW_CASH || s_ui_state == UI_STATE_SHOW_STATS) {
         if (event == ENCODER_EVENT_CLICK || event == ENCODER_EVENT_LONG_PRESS) {
             s_ui_state = UI_STATE_MENU_NAV;
             render_menu();
@@ -363,6 +403,11 @@ void menu_process_event(encoder_event_t event) {
             } else if (s_selected_item == 6) {
                 // +10 сом
                 system_state_add_credit(10);
+            } else if (s_selected_item == 7) {
+                // 8. Статистика
+                s_ui_state = UI_STATE_SHOW_STATS;
+                render_stats_screen();
+                return;
             }
             render_menu();
         }

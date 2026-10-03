@@ -3,15 +3,14 @@
 #include <string.h>
 #include "esp_log.h"
 #include "esp_event.h"
-#include "mqtt_client.h" // ESP-IDF Native MQTT Client
-#include "esp_crt_bundle.h" // Для автоматической проверки SSL-сертификатов
+#include "mqtt_client.h"
+#include "esp_crt_bundle.h"
 
 static const char *TAG = "MQTT_CLIENT";
 
 static esp_mqtt_client_handle_t s_client = NULL;
 static bool s_is_connected = false;
 
-// Внешняя функция/очередь из system_state.c (заглушка или прямой вызов)
 extern void system_state_handle_mqtt_cmd(const char *topic, int topic_len, const char *data, int data_len);
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
@@ -20,15 +19,14 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 
     switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED:
-        ESP_LOGI(TAG, "Успешно подключились к HiveMQ Cloud!");
+        ESP_LOGI(TAG, "Успешно подключились к EMQX!");
         s_is_connected = true;
 
-        // Подписываемся на топик команд (QoS 1 для надежной доставки)
-        int msg_id = esp_mqtt_client_subscribe(s_client, MQTT_TOPIC_CMD, 1);
-        ESP_LOGI(TAG, "Подписка на топик %s, msg_id=%d", MQTT_TOPIC_CMD, msg_id);
-
-        // Оповещаем брокер, что мы в сети
-        mqtt_app_publish_status("{\"status\":\"online\"}");
+        // 1. Личная подписка стола
+        esp_mqtt_client_subscribe(s_client, "billiards/klubnyy15_table4/cmd", 1);
+        
+        // 2. Общая подписка для всех 5 столов
+        esp_mqtt_client_subscribe(s_client, "billiards/all/cmd", 1);
         break;
 
     case MQTT_EVENT_DISCONNECTED:
@@ -42,12 +40,11 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 
     case MQTT_EVENT_DATA:
         ESP_LOGI(TAG, "===============================================");
-        ESP_LOGI(TAG, ">>> [MQTT RX] Получены данные из HiveMQ!");
+        ESP_LOGI(TAG, ">>> [MQTT RX] Получены данные из EMQX!");
         ESP_LOGI(TAG, ">>> Topic (длина %d): %.*s", event->topic_len, event->topic_len, event->topic);
         ESP_LOGI(TAG, ">>> Payload (длина %d): %.*s", event->data_len, event->data_len, event->data);
         ESP_LOGI(TAG, "===============================================");
 
-        // Передаем полученную команду в главную логику системы
         system_state_handle_mqtt_cmd(event->topic, event->topic_len, event->data, event->data_len);
         break;
 
@@ -74,7 +71,7 @@ esp_err_t mqtt_app_start(void)
                 .password = MQTT_PASS,
             },
         },
-        .task.stack_size = 6144, // <--- УВЕЛИЧЕНО ДЛЯ ИЗБЕЖАНИЯ STACK OVERFLOW
+        .task.stack_size = 6144,
         .task.priority = 5,
     };
 
