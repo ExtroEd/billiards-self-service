@@ -20,18 +20,6 @@
 #include "Peripheral/display_7seg.h"
 #include "Peripheral/ds3231.h"
 
-#define MAX_OFFLINE_SECONDS (2 * 3600) // 2 часа = 7200 секунд
-
-// Минимальный валидный timestamp (например, 01.01.2024 00:00:00 UTC)
-#ifndef MIN_VALID_TIMESTAMP
-#define MIN_VALID_TIMESTAMP 1704067200LL
-#endif
-
-// Максимально допустимое время простоя без сброса (например, 2 часа = 7200 сек)
-#ifndef MAX_OFFLINE_SECONDS
-#define MAX_OFFLINE_SECONDS 7200LL
-#endif
-
 static const char *TAG_SYS = "SYSTEM_STATE";
 static const char *NVS_NAMESPACE = "storage";
 
@@ -136,12 +124,6 @@ static void timer_countdown_task(void *pvParameters) {
 
                 if (s_ds3231_dev) {
                     ds3231_write_rem_seconds(s_ds3231_dev, (int32_t)g_remaining_seconds);
-                    
-                    // Также обновляем метку времени последнего активного тика
-                    int64_t current_ts = 0;
-                    if (ds3231_get_time(s_ds3231_dev, &current_ts) == ESP_OK) {
-                        ds3231_write_last_timestamp(s_ds3231_dev, current_ts);
-                    }
                 }
 
                 int remaining_secs = g_remaining_seconds % 60;
@@ -223,44 +205,15 @@ void system_state_init(i2c_master_dev_handle_t ds3231_dev) {
     load_config_from_nvs();
 
     int32_t saved_secs = 0;
-    int64_t last_ts = 0;
-    int64_t now_ts = 0;
-
-    if (s_ds3231_dev &&
-        ds3231_read_rem_seconds(s_ds3231_dev, &saved_secs) == ESP_OK && saved_secs > 0) 
-    {
-        // Если есть сохраненные секунды, первично считаем, что сессия валидна
-        bool should_restore = true;
-
-        // Проверяем метки времени, только если ОБЕ метки адекватные (> MIN_VALID_TIMESTAMP)
-        if (ds3231_read_last_timestamp(s_ds3231_dev, &last_ts) == ESP_OK &&
-            ds3231_get_time(s_ds3231_dev, &now_ts) == ESP_OK) 
-        {
-            if (last_ts >= MIN_VALID_TIMESTAMP && now_ts >= MIN_VALID_TIMESTAMP) {
-                int64_t offline_duration = now_ts - last_ts;
-                ESP_LOGI(TAG_SYS, "Проверка времени простоя: прошлый=%lld, сейчас=%lld, пропущено=%lld сек.", 
-                        last_ts, now_ts, offline_duration);
-
-                if (offline_duration < 0 || offline_duration > MAX_OFFLINE_SECONDS) {
-                    ESP_LOGW(TAG_SYS, "⚠️ Питание было отключено слишком долго (%lld сек.)! Сброс.", offline_duration);
-                    should_restore = false;
-                }
-            } else {
-                ESP_LOGW(TAG_SYS, "⚠️ Время RTC еще не синхронизировано (last=%lld, now=%lld). Доверяем сохраненным секундам.", last_ts, now_ts);
-            }
-        }
-
-        if (should_restore) {
-            g_remaining_seconds = (int)saved_secs;
-            g_relay_state = true;
-            gpio_set_level(RELAY_GPIO_PIN, 1);
-            ESP_LOGI(TAG_SYS, "🔥 ВОССТАНОВЛЕНИЕ СЕССИИ ИЗ DS3231! Замороженный остаток: %d сек.", g_remaining_seconds);
-        } else {
-            g_remaining_seconds = 0;
-            g_relay_state = false;
-            gpio_set_level(RELAY_GPIO_PIN, 0);
-            ds3231_write_rem_seconds(s_ds3231_dev, 0);
-        }
+    if (s_ds3231_dev && ds3231_read_rem_seconds(s_ds3231_dev, &saved_secs) == ESP_OK && saved_secs > 0) {
+        g_remaining_seconds = (int)saved_secs;
+        g_relay_state = true;
+        gpio_set_level(RELAY_GPIO_PIN, 1);
+        ESP_LOGI(TAG_SYS, "🔥 ВОССТАНОВЛЕНИЕ СЕССИИ ИЗ DS3231! Замороженный остаток: %d сек.", g_remaining_seconds);
+    } else {
+        g_remaining_seconds = 0;
+        g_relay_state = false;
+        gpio_set_level(RELAY_GPIO_PIN, 0);
     }
 
     xTaskCreate(timer_countdown_task, "timer_countdown_task", 3072, NULL, 5, NULL);
@@ -283,10 +236,6 @@ void system_state_add_credit(int amount) {
                 g_remaining_seconds = convert_soms_to_seconds(g_balance);
                 if (s_ds3231_dev) {
                     ds3231_write_rem_seconds(s_ds3231_dev, (int32_t)g_remaining_seconds);
-                    int64_t current_ts = 0;
-                    if (ds3231_get_time(s_ds3231_dev, &current_ts) == ESP_OK) {
-                        ds3231_write_last_timestamp(s_ds3231_dev, current_ts);
-                    }
                 }
                 update_relay_state_unlocked();
             }

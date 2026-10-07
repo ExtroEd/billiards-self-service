@@ -126,6 +126,17 @@
     // Автообновление каждые 3 секунды
     setInterval(updateStatus, 3000);
     updateStatus();
+
+    // Сигнал ESP32 о том, что пользователь закрыл вкладку/браузер
+    window.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'hidden') {
+            navigator.sendBeacon('/api/close');
+        }
+    });
+
+    window.addEventListener('pagehide', function() {
+        navigator.sendBeacon('/api/close');
+    });
 </script>
 </body>
 </html>

@@ -15,11 +15,16 @@
 #include "nvs.h"
 #include "esp_netif.h"
 #include "esp_http_server.h"
+#include "esp_timer.h"
 #include "lwip/sockets.h"
 #include "system_state.h"
 #include "Networking_Services/tg_bot.h"
 
 static const char *TAG = "WIFI_APP";
+
+// --- Таймер авто-отключения AP режима ---
+static esp_timer_handle_t s_ap_timeout_timer = NULL;
+#define AP_TIMEOUT_MS (3 * 60 * 1000) // 3 минуты (180 000 мс)
 
 #define NVS_NAMESPACE      "wifi_config"
 #define NVS_KEY_SSID       "ssid"
@@ -42,6 +47,61 @@ static esp_netif_t *s_netif_ap = NULL;
 static esp_netif_t *s_netif_sta = NULL;
 static TaskHandle_t s_dns_task_handle = NULL;
 static int s_retry_num = 0;
+
+// Прототип функции переключения/переподключения
+static void stop_ap_and_reconnect_sta(void);
+
+static bool connect_to_saved_wifi(const char *ssid, const char *pass);
+
+// Callback таймера (вызывается через 3 минуты после старта/подключения)
+static void ap_timeout_callback(void* arg) {
+    ESP_LOGW(TAG, "Таймаут SoftAP (3 минуты истекли). Возврат к основному Wi-Fi...");
+    stop_ap_and_reconnect_sta();
+}
+
+static void start_ap_timeout_timer(void) {
+    if (s_ap_timeout_timer == NULL) {
+        const esp_timer_create_args_t timer_args = {
+            .callback = &ap_timeout_callback,
+            .name = "ap_timeout"
+        };
+        esp_timer_create(&timer_args, &s_ap_timeout_timer);
+    }
+    esp_timer_stop(s_ap_timeout_timer); // Перезапускаем если уже работал
+    esp_timer_start_once(s_ap_timeout_timer, AP_TIMEOUT_MS * 1000LL);
+    ESP_LOGI(TAG, "Таймер отключения SoftAP запущен на 3 минуты");
+}
+
+static void stop_ap_timeout_timer(void) {
+    if (s_ap_timeout_timer != NULL) {
+        esp_timer_stop(s_ap_timeout_timer);
+    }
+}
+
+// Завершение работы SoftAP / Веб-сервера и попытка вернутся в STA
+static void stop_ap_and_reconnect_sta(void) {
+    stop_ap_timeout_timer();
+
+    // Остановка DNS и Web-сервера
+    if (s_dns_task_handle != NULL) {
+        vTaskDelete(s_dns_task_handle);
+        s_dns_task_handle = NULL;
+    }
+    if (s_http_server != NULL) {
+        httpd_stop(s_http_server);
+        s_http_server = NULL;
+    }
+
+    // Возврат интерфейса к сохраненным сетям
+    char ssid[32] = {0}, pass[64] = {0};
+    if (wifi_app_read_credentials(ssid, pass) == ESP_OK && strlen(ssid) > 0) {
+        ESP_LOGI(TAG, "Возврат к сети из NVS: %s", ssid);
+        connect_to_saved_wifi(ssid, pass);
+    } else {
+        ESP_LOGI(TAG, "Возврат к дефолтной сети: %s", SECRET_WIFI_SSID);
+        connect_to_saved_wifi(SECRET_WIFI_SSID, SECRET_WIFI_PASS);
+    }
+}
 
 static void url_decode(char *dst, const char *src) {
     char a, b;
@@ -166,6 +226,16 @@ static esp_err_t redirect_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+static esp_err_t api_close_post_handler(httpd_req_t *req) {
+    httpd_resp_send(req, "OK", HTTPD_RESP_USE_STRLEN);
+    ESP_LOGI(TAG, "Получен запрос закрытия сессии от клиента. Возврат к Wi-Fi...");
+    
+    // Даем 200 мс для отправки ответа клиенту перед выключением AP
+    vTaskDelay(pdMS_TO_TICKS(200));
+    stop_ap_and_reconnect_sta();
+    return ESP_OK;
+}
+
 // Быстрая пустышка для всех запросов иконки (сохраняет сокеты и ресурсы)
 static esp_err_t favicon_get_handler(httpd_req_t *req) {
     httpd_resp_set_status(req, "204 No Content");
@@ -282,6 +352,9 @@ static void start_web_server(void) {
         httpd_uri_t action_uri = { .uri = "/api/action", .method = HTTP_POST, .handler = api_action_post_handler };
         httpd_register_uri_handler(s_http_server, &action_uri);
 
+        httpd_uri_t close_uri = { .uri = "/api/close", .method = HTTP_POST, .handler = api_close_post_handler };
+        httpd_register_uri_handler(s_http_server, &close_uri);
+
         // Пустышка для favicon
         httpd_uri_t favicon_uri = {
             .uri      = "/favicon.ico",
@@ -321,11 +394,18 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     } 
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STACONNECTED) {
         wifi_event_ap_staconnected_t* event = (wifi_event_ap_staconnected_t*) event_data;
-        ESP_LOGI(TAG, "Смартфон подключился к SoftAP (AID: %d). Рисуем QR сайта...", event->aid);
+        ESP_LOGI(TAG, "Смартфон подключился к SoftAP (AID: %d). Старт 3-минутного таймера.", event->aid);
 
-        // Переключаем экран на QR-код сайта с синей шапкой САЙТ
+        // Запускаем таймер на 3 минуты при подключении устройства
+        start_ap_timeout_timer();
+
         display_tft_wake();
         display_tft_show_qr_payload("http://192.168.4.1/", "САЙТ");
+    }
+    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+        ESP_LOGI(TAG, "Смартфон отключился от SoftAP. Возврат к рабочему Wi-Fi...");
+        // Телефон отключился от Wi-Fi — мгновенно восстанавливаем рабочую сеть
+        stop_ap_and_reconnect_sta();
     }
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         if (s_retry_num < 10) {
@@ -379,6 +459,9 @@ static void start_soft_ap(void) {
     if (s_dns_task_handle == NULL) {
         xTaskCreate(dns_server_task, "dns_task", 3072, NULL, 5, &s_dns_task_handle);
     }
+    
+    // Запускаем 3-минутный отсчет безопасности даже если никто не подключился к AP
+    start_ap_timeout_timer();
 }
 
 static bool connect_to_saved_wifi(const char *ssid, const char *pass) {

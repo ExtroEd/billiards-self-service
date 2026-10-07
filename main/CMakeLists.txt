@@ -7,6 +7,7 @@ idf_component_register(
         "Networking_Services/wifi_app.c"
         "Peripheral/display_7seg.c"
         "Peripheral/display_tft.c"
+        "Peripheral/ds3231.c"
         "Peripheral/encoder.c"
         "Peripheral/qr_code.c"
     INCLUDE_DIRS 
@@ -26,6 +27,7 @@ idf_component_register(
         esp_http_server 
         esp_driver_gpio
         esp_driver_spi
+        esp_driver_i2c
         nvs_flash 
         driver
         qrcode

@@ -26,7 +26,9 @@ typedef enum {
     UI_STATE_MENU_EDIT,
     UI_STATE_SHOW_QR,
     UI_STATE_SHOW_CASH,
-    UI_STATE_SHOW_STATS
+    UI_STATE_SHOW_STATS,
+    UI_STATE_CONFIRM_RESET_CASH,
+    UI_STATE_CONFIRM_RESET_TIME
 } ui_state_t;
 
 // Начальное состояние теперь сразу Меню
@@ -214,6 +216,21 @@ static void render_stats_screen(void) {
     display_tft_draw_string(8, 140, "Нажми для выхода", COLOR_DARKGRAY, COLOR_BLACK);
 }
 
+static void render_confirm_screen(const char *title) {
+    display_tft_fill_screen(COLOR_BLACK);
+    
+    // Заголовок
+    display_tft_fill_rect(0, 0, 128, 16, COLOR_RED);
+    display_tft_draw_string(8, 4, title, COLOR_WHITE, COLOR_RED);
+
+    // Текст вопроса
+    display_tft_draw_string(16, 45, "Вы уверены?", COLOR_YELLOW, COLOR_BLACK);
+
+    // Подсказки к действиям
+    display_tft_draw_string(10, 85, "Клик - ДА", COLOR_GREEN, COLOR_BLACK);
+    display_tft_draw_string(10, 110, "Вращение - НЕТ", COLOR_RED, COLOR_BLACK);
+}
+
 void display_tft_wake(void) {
     s_last_activity_time = esp_timer_get_time();
     if (!s_is_awake) {
@@ -361,7 +378,7 @@ static void render_menu(void) {
 void menu_process_event(encoder_event_t event) {
     display_tft_wake();
 
-    // 1. Возврат в меню из режима просмотра QR-кода или экрана кассы
+    // 1. Возврат в меню из экранов просмотра
     if (s_ui_state == UI_STATE_SHOW_QR || s_ui_state == UI_STATE_SHOW_CASH || s_ui_state == UI_STATE_SHOW_STATS) {
         if (event == ENCODER_EVENT_CLICK || event == ENCODER_EVENT_LONG_PRESS) {
             s_ui_state = UI_STATE_MENU_NAV;
@@ -370,6 +387,25 @@ void menu_process_event(encoder_event_t event) {
         return;
     }
 
+    // 2. Обработка состояния подтверждения сброса
+    if (s_ui_state == UI_STATE_CONFIRM_RESET_CASH || s_ui_state == UI_STATE_CONFIRM_RESET_TIME) {
+        if (event == ENCODER_EVENT_CLICK) {
+            if (s_ui_state == UI_STATE_CONFIRM_RESET_CASH) {
+                system_state_reset_total_money();
+            } else if (s_ui_state == UI_STATE_CONFIRM_RESET_TIME) {
+                system_state_reset_balance();
+            }
+            s_ui_state = UI_STATE_MENU_NAV;
+            render_menu();
+        } else if (event == ENCODER_EVENT_UP || event == ENCODER_EVENT_DOWN || event == ENCODER_EVENT_LONG_PRESS) {
+            // Любое вращение или долгий клик — отмена
+            s_ui_state = UI_STATE_MENU_NAV;
+            render_menu();
+        }
+        return;
+    }
+
+    // 3. Главное меню
     if (s_ui_state == UI_STATE_MENU_NAV) {
         if (event == ENCODER_EVENT_UP) {
             s_selected_item = (s_selected_item > 0) ? s_selected_item - 1 : MENU_ITEMS_COUNT - 1;
@@ -379,32 +415,29 @@ void menu_process_event(encoder_event_t event) {
             render_menu();
         } else if (event == ENCODER_EVENT_CLICK) {
             if (s_selected_item == 0) {
-                // 1. Вай-Фай
                 ESP_LOGI(TAG, "Открытие QR-кода для настройки Wi-Fi...");
                 wifi_app_start_ap_mode(); 
-
-                // Отображаем заголовок ВАЙ-ФАЙ
                 display_tft_show_qr_payload("WIFI:S:ESP32_Config;T:WPA;P:12345678;;", "ВАЙ-ФАЙ");
                 return;
             } else if (s_selected_item == 1 || s_selected_item == 2) {
-                // Мин. старт или Цена за 1 час
                 s_ui_state = UI_STATE_MENU_EDIT;
             } else if (s_selected_item == 3) {
-                // 4. Касса всего - Показываем отдельный экран
                 s_ui_state = UI_STATE_SHOW_CASH;
                 render_cash_screen();
                 return;
             } else if (s_selected_item == 4) {
-                // Сброс кассы
-                system_state_reset_total_money();
+                // Сброс кассы -> Окно подтверждения
+                s_ui_state = UI_STATE_CONFIRM_RESET_CASH;
+                render_confirm_screen("Сброс кассы");
+                return;
             } else if (s_selected_item == 5) {
-                // Сброс времени
-                system_state_reset_balance();
+                // Сброс времени -> Окно подтверждения
+                s_ui_state = UI_STATE_CONFIRM_RESET_TIME;
+                render_confirm_screen("Сброс времени");
+                return;
             } else if (s_selected_item == 6) {
-                // +10 сом
                 system_state_add_credit(10);
             } else if (s_selected_item == 7) {
-                // 8. Статистика
                 s_ui_state = UI_STATE_SHOW_STATS;
                 render_stats_screen();
                 return;
