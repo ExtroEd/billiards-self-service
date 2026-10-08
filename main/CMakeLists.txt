@@ -10,11 +10,14 @@ idf_component_register(
         "Peripheral/ds3231.c"
         "Peripheral/encoder.c"
         "Peripheral/qr_code.c"
+        "UI/font5x7.c"
+        "UI/ui_menu.c"
     INCLUDE_DIRS 
         "."
         "Business_Logic"
         "Networking_Services"
         "Peripheral"
+        "UI"
     EMBED_FILES
         "web/index.html"
     REQUIRES 

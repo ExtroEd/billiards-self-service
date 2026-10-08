@@ -39,4 +39,7 @@ esp_err_t wifi_app_save_credentials(const char *ssid, const char *pass);
  */
 esp_err_t wifi_app_read_credentials(char *ssid_out, char *pass_out);
 
+// Завершает работу точки доступа (SoftAP) и переподключается к сохранённой сети STA
+void wifi_app_stop_ap_and_reconnect(void);
+
 #endif // WIFI_APP_H

@@ -22,10 +22,12 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         ESP_LOGI(TAG, "Успешно подключились к EMQX!");
         s_is_connected = true;
 
-        // 1. Личная подписка стола
-        esp_mqtt_client_subscribe(s_client, "billiards/klubnyy15_table4/cmd", 1);
+        // 1. Динамическая личная подписка стола (например: billiards/klubnyy15_table4/cmd)
+        char personal_cmd_topic[64];
+        snprintf(personal_cmd_topic, sizeof(personal_cmd_topic), "billiards/klubnyy15_table%d/cmd", TABLE_NUMBER);
+        esp_mqtt_client_subscribe(s_client, personal_cmd_topic, 1);
         
-        // 2. Общая подписка для всех 5 столов
+        // 2. Общая подписка для всех столов
         esp_mqtt_client_subscribe(s_client, "billiards/all/cmd", 1);
         break;
 

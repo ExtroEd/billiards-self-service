@@ -10,6 +10,7 @@
 #include "Peripheral/display_tft.h"
 #include "Peripheral/ds3231.h"
 #include "Networking_Services/wifi_app.h"
+#include "UI/ui_menu.h"
 
 #define I2C_SDA_PIN GPIO_NUM_33
 #define I2C_SCL_PIN GPIO_NUM_32
@@ -43,6 +44,7 @@ void app_main(void) {
     system_state_init(ds3231_dev);
     encoder_init(encoder_events_queue);
     display_tft_init();
+    ui_menu_init();
 
     // 4. Включение сетевого стека и Wi-Fi
     wifi_app_init();

@@ -84,4 +84,6 @@ void system_state_init_sntp(void);
  */
 void system_state_handle_mqtt_cmd(const char *topic, int topic_len, const char *data, int data_len);
 
+void system_state_process_command(const char *cmd_json);
+
 #endif // SYSTEM_STATE_H

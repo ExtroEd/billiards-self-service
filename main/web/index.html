@@ -30,9 +30,7 @@
     <div class="card">
         <h2>Панель Управления</h2>
         <div>Статус реле: <b id="relay-status">---</b></div>
-        <div>Текущий баланс:</div>
-        <div class="stat-val" id="balance-val">0 сом</div>
-        <div>Общая касса:</div>
+        <div style="margin-top: 15px;">Общая касса:</div>
         <div class="stat-val" id="total-val" style="color:#eccc68;">0 сом</div>
     </div>
 
@@ -73,7 +71,6 @@
             const res = await fetch('/api/status');
             const data = await res.json();
             
-            document.getElementById('balance-val').innerText = data.balance + ' сом';
             document.getElementById('total-val').innerText = data.total_money + ' сом';
             
             const minElem = document.getElementById('min-start');

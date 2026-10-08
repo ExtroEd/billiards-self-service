@@ -10,4 +10,6 @@
  */
 void tg_bot_send_status_report(const char *target_chat_id);
 
+void tg_bot_send_text(const char *target_chat_id, const char *text);
+
 #endif // TG_BOT_H

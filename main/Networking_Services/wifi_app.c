@@ -19,6 +19,7 @@
 #include "lwip/sockets.h"
 #include "system_state.h"
 #include "Networking_Services/tg_bot.h"
+#include "UI/ui_menu.h"
 
 static const char *TAG = "WIFI_APP";
 
@@ -76,6 +77,10 @@ static void stop_ap_timeout_timer(void) {
     if (s_ap_timeout_timer != NULL) {
         esp_timer_stop(s_ap_timeout_timer);
     }
+}
+
+void wifi_app_stop_ap_and_reconnect(void) {
+    stop_ap_and_reconnect_sta();
 }
 
 // Завершение работы SoftAP / Веб-сервера и попытка вернутся в STA
