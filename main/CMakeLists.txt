@@ -2,9 +2,11 @@ idf_component_register(
     SRCS 
         "main.c"
         "Business_Logic/system_state.c"
+        "Business_Logic/cmd_handler.c"
         "Networking_Services/app_mqtt_client.c"
         "Networking_Services/tg_bot.c"
         "Networking_Services/wifi_app.c"
+        "Networking_Services/web_server_app.c"
         "Peripheral/display_7seg.c"
         "Peripheral/display_tft.c"
         "Peripheral/ds3231.c"

@@ -1,33 +1,32 @@
 #include "system_state.h"
+#include "cmd_handler.h"
+#include "Networking_Services/wifi_app.h"
+#include "Networking_Services/app_mqtt_client.h"
+#include "Peripheral/display_tft.h"
+#include "Peripheral/display_7seg.h"
+#include "Peripheral/ds3231.h"
+
 #include <stdio.h>
 #include <time.h>
 #include <sys/time.h>
 #include <string.h>
 #include <stdlib.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-#include "freertos/queue.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "nvs.h"
-#include "cJSON.h"
 #include "esp_sntp.h"
-#include "Networking_Services/tg_bot.h"
-
-#include "Peripheral/display_tft.h"
-#include "Peripheral/display_7seg.h"
-#include "Peripheral/ds3231.h"
 
 #define MAX_OFFLINE_SECONDS (2 * 3600) // 2 часа = 7200 секунд
 
-// Минимальный валидный timestamp (например, 01.01.2024 00:00:00 UTC)
 #ifndef MIN_VALID_TIMESTAMP
 #define MIN_VALID_TIMESTAMP 1704067200LL
 #endif
 
-// Максимально допустимое время простоя без сброса (например, 2 часа = 7200 сек)
 #ifndef MAX_OFFLINE_SECONDS
 #define MAX_OFFLINE_SECONDS 7200LL
 #endif
@@ -44,13 +43,7 @@ static bool g_relay_state = false;
 
 static i2c_master_dev_handle_t s_ds3231_dev = NULL;
 static SemaphoreHandle_t g_state_mutex = NULL;
-static QueueHandle_t g_mqtt_cmd_queue = NULL;
 
-typedef struct {
-    char payload[512];
-} mqtt_cmd_msg_t;
-
-// Коллбэк успешной синхронизации времени по Wi-Fi (SNTP -> DS3231)
 static void time_sync_notification_cb(struct timeval *tv) {
     ESP_LOGI(TAG_SYS, "SNTP время синхронизировано с сервером!");
     if (s_ds3231_dev && tv) {
@@ -127,116 +120,55 @@ static void update_relay_state_unlocked(void) {
 }
 
 static void timer_countdown_task(void *pvParameters) {
+    uint32_t ms_accumulator = 0;
+    const uint32_t step_ms = 150; // Скорость анимации змейки = 150 мс
+    bool snake_was_active = false;
+
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(step_ms));
+        ms_accumulator += step_ms;
 
-        if (xSemaphoreTake(g_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-            if (g_relay_state && g_remaining_seconds > 0) {
-                g_remaining_seconds--;
+        if (xSemaphoreTake(g_state_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            
+            // 1. АНИМАЦИЯ ЗМЕЙКИ (Только когда реле выключено и есть Wi-Fi + MQTT)
+            if (!g_relay_state) {
+                bool network_ok = wifi_app_is_connected() && mqtt_app_is_connected();
 
-                if (s_ds3231_dev) {
-                    ds3231_write_rem_seconds(s_ds3231_dev, (int32_t)g_remaining_seconds);
-                    
-                    // Также обновляем метку времени последнего активного тика
-                    int64_t current_ts = 0;
-                    if (ds3231_get_time(s_ds3231_dev, &current_ts) == ESP_OK) {
-                        ds3231_write_last_timestamp(s_ds3231_dev, current_ts);
+                if (network_ok) {
+                    display_7seg_snake_step();
+                    snake_was_active = true;
+                } else {
+                    if (snake_was_active) {
+                        display_7seg_clear();
+                        snake_was_active = false;
                     }
                 }
-
-                int remaining_secs = g_remaining_seconds % 60;
-                display_7seg_show_time(g_remaining_seconds / 60, remaining_secs, (g_remaining_seconds % 2 == 0));
-
-                update_relay_state_unlocked();
-            } else if (!g_relay_state) {
-                display_7seg_snake_step();
             }
-            xSemaphoreGive(g_state_mutex);
-        }
-    }
-}
 
-static void mqtt_cmd_worker_task(void *pvParameters) {
-    mqtt_cmd_msg_t msg;
+            // 2. ОБРАБОТКА 1 СЕКУНДЫ (ровно раз в 1000 мс)
+            if (ms_accumulator >= 1000) {
+                ms_accumulator -= 1000;
 
-    while (1) {
-        if (xQueueReceive(g_mqtt_cmd_queue, &msg, portMAX_DELAY) == pdTRUE) {
-            ESP_LOGI(TAG_SYS, "=== [MQTT WORKER] Разбор входящего сообщения ===");
+                if (g_relay_state && g_remaining_seconds > 0) {
+                    g_remaining_seconds--;
 
-            cJSON *root = cJSON_Parse(msg.payload);
-            if (root != NULL) {
-                cJSON *event = cJSON_GetObjectItem(root, "event");
-
-                if (event && cJSON_IsString(event)) {
-                    const char *evt = event->valuestring;
-
-                    // 1. Пополнение баланса (Оплата)
-                    if (strcmp(evt, "PAYMENT_SUCCESS") == 0) {
-                        cJSON *amount = cJSON_GetObjectItem(root, "amount");
-                        if (amount && cJSON_IsNumber(amount)) {
-                            system_state_add_credit(amount->valueint);
-                        }
-                    }
-                    // 2. Запрос статуса / отчёта
-                    else if (strcmp(evt, "REQUEST_STATUS") == 0) {
-                        cJSON *req_by = cJSON_GetObjectItem(root, "requestedBy");
-                        if (req_by && cJSON_IsString(req_by)) {
-                            tg_bot_send_status_report(req_by->valuestring);
-                        }
-                    }
-                    // 3. Сброс текущей сессии (Времени и баланса стола)
-                    else if (strcmp(evt, "RESET_SESSION") == 0) {
-                        system_state_reset_balance();
-                        ESP_LOGW(TAG_SYS, "Удаленный сброс сессии выполнен!");
+                    if (s_ds3231_dev) {
+                        ds3231_write_rem_seconds(s_ds3231_dev, (int32_t)g_remaining_seconds);
                         
-                        cJSON *req_by = cJSON_GetObjectItem(root, "requestedBy");
-                        if (req_by && cJSON_IsString(req_by)) {
-                            tg_bot_send_text(req_by->valuestring, "✅ <b>Сессия и время успешно сброшены!</b>");
+                        int64_t current_ts = 0;
+                        if (ds3231_get_time(s_ds3231_dev, &current_ts) == ESP_OK) {
+                            ds3231_write_last_timestamp(s_ds3231_dev, current_ts);
                         }
                     }
-                    // 4. Сброс общей кассы (Инкассация)
-                    else if (strcmp(evt, "RESET_CASH") == 0) {
-                        system_state_reset_total_money();
-                        ESP_LOGW(TAG_SYS, "Удаленная инкассация (сброс кассы) выполнена!");
 
-                        cJSON *req_by = cJSON_GetObjectItem(root, "requestedBy");
-                        if (req_by && cJSON_IsString(req_by)) {
-                            tg_bot_send_text(req_by->valuestring, "✅ <b>Общая касса успешно обнулена!</b>");
-                        }
-                    }
-                    // 5. Изменение цены за 1 час
-                    else if (strcmp(evt, "SET_PRICE_1H") == 0) {
-                        cJSON *val = cJSON_GetObjectItem(root, "value");
-                        if (val && cJSON_IsNumber(val) && val->valueint > 0) {
-                            system_state_set_price_per_1hour(val->valueint);
-                            
-                            cJSON *req_by = cJSON_GetObjectItem(root, "requestedBy");
-                            if (req_by && cJSON_IsString(req_by)) {
-                                char msg_buf[128];
-                                snprintf(msg_buf, sizeof(msg_buf), 
-                                         "✅ <b>Новая цена за 1 час:</b> %d сом", val->valueint);
-                                tg_bot_send_text(req_by->valuestring, msg_buf);
-                            }
-                        }
-                    }
-                    // 6. Изменение минимального порога старта
-                    else if (strcmp(evt, "SET_MIN_THRESHOLD") == 0) {
-                        cJSON *val = cJSON_GetObjectItem(root, "value");
-                        if (val && cJSON_IsNumber(val) && val->valueint > 0) {
-                            system_state_set_min_threshold(val->valueint);
+                    int remaining_secs = g_remaining_seconds % 60;
+                    display_7seg_show_time(g_remaining_seconds / 60, remaining_secs, (g_remaining_seconds % 2 == 0));
 
-                            cJSON *req_by = cJSON_GetObjectItem(root, "requestedBy");
-                            if (req_by && cJSON_IsString(req_by)) {
-                                char msg_buf[128];
-                                snprintf(msg_buf, sizeof(msg_buf), 
-                                         "✅ <b>Новый мин. порог старта:</b> %d сом", val->valueint);
-                                tg_bot_send_text(req_by->valuestring, msg_buf);
-                            }
-                        }
-                    }
+                    update_relay_state_unlocked();
                 }
-                cJSON_Delete(root);
             }
+
+            xSemaphoreGive(g_state_mutex);
         }
     }
 }
@@ -252,7 +184,9 @@ void system_state_init(i2c_master_dev_handle_t ds3231_dev) {
     ESP_ERROR_CHECK(ret);
 
     g_state_mutex = xSemaphoreCreateMutex();
-    g_mqtt_cmd_queue = xQueueCreate(5, sizeof(mqtt_cmd_msg_t));
+
+    // Инициализируем обработчик MQTT/Telegram команд
+    cmd_handler_init();
 
     g_balance = 0;
     g_remaining_seconds = 0;
@@ -282,10 +216,8 @@ void system_state_init(i2c_master_dev_handle_t ds3231_dev) {
     if (s_ds3231_dev &&
         ds3231_read_rem_seconds(s_ds3231_dev, &saved_secs) == ESP_OK && saved_secs > 0) 
     {
-        // Если есть сохраненные секунды, первично считаем, что сессия валидна
         bool should_restore = true;
 
-        // Проверяем метки времени, только если ОБЕ метки адекватные (> MIN_VALID_TIMESTAMP)
         if (ds3231_read_last_timestamp(s_ds3231_dev, &last_ts) == ESP_OK &&
             ds3231_get_time(s_ds3231_dev, &now_ts) == ESP_OK) 
         {
@@ -317,7 +249,6 @@ void system_state_init(i2c_master_dev_handle_t ds3231_dev) {
     }
 
     xTaskCreate(timer_countdown_task, "timer_countdown_task", 3072, NULL, 5, NULL);
-    xTaskCreate(mqtt_cmd_worker_task, "mqtt_cmd_worker", 4096, NULL, 4, NULL);
 }
 
 void system_state_add_credit(int amount) {
@@ -455,13 +386,18 @@ bool system_state_is_relay_active(void) {
     return active;
 }
 
+bool system_state_is_rtc_ok(void) {
+    bool ok = false;
+    if (xSemaphoreTake(g_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        if (s_ds3231_dev != NULL) {
+            int64_t dummy_ts = 0;
+            ok = (ds3231_get_time(s_ds3231_dev, &dummy_ts) == ESP_OK);
+        }
+        xSemaphoreGive(g_state_mutex);
+    }
+    return ok;
+}
+
 void system_state_handle_mqtt_cmd(const char *topic, int topic_len, const char *data, int data_len) {
-    if (!g_mqtt_cmd_queue || data_len <= 0) return;
-
-    mqtt_cmd_msg_t msg;
-    int copy_len = data_len < sizeof(msg.payload) - 1 ? data_len : sizeof(msg.payload) - 1;
-    memcpy(msg.payload, data, copy_len);
-    msg.payload[copy_len] = '\0';
-
-    xQueueSend(g_mqtt_cmd_queue, &msg, 0);
+    cmd_handler_handle_mqtt_cmd(topic, topic_len, data, data_len);
 }

@@ -1,7 +1,9 @@
 #include "UI/ui_menu.h"
 #include "Peripheral/display_tft.h"
+#include "Peripheral/ds3231.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_wifi.h"
 #include <string.h>
 #include <stdio.h>
 #include "Networking_Services/wifi_app.h"
@@ -60,26 +62,45 @@ static void render_stats_screen(void) {
     display_tft_fill_rect(0, 0, 128, 16, COLOR_BLUE);
     display_tft_draw_string(20, 4, "Статистика", COLOR_WHITE, COLOR_BLUE);
 
+    // 1. Аптайм
     int64_t uptime_sec = esp_timer_get_time() / 1000000LL;
     int days = (int)(uptime_sec / 86400);
     int hours = (int)((uptime_sec % 86400) / 3600);
     int mins = (int)((uptime_sec % 3600) / 60);
 
-    display_tft_draw_string(4, 25, "Аптайм (Д:Ч:М):", COLOR_YELLOW, COLOR_BLACK);
-    
+    display_tft_draw_string(4, 22, "Аптайм:", COLOR_YELLOW, COLOR_BLACK);
     char uptime_str[32];
     snprintf(uptime_str, sizeof(uptime_str), "%dд %02dч %02dм", days, hours, mins);
-    display_tft_draw_string(4, 38, uptime_str, COLOR_YELLOW, COLOR_BLACK);
+    display_tft_draw_string(52, 22, uptime_str, COLOR_YELLOW, COLOR_BLACK);
 
+    // 2. Вай-Фай и уровень сигнала (RSSI в dBm)
     bool wifi_ok = (wifi_app_get_mode() == WIFI_APP_MODE_STA);
-    display_tft_draw_string(4, 60, "Вай-Фай:", COLOR_WHITE, COLOR_BLACK);
-    display_tft_draw_string(52, 60, wifi_ok ? "Работает" : "Нет связи", 
-                            wifi_ok ? COLOR_GREEN : COLOR_RED, COLOR_BLACK);
+    display_tft_draw_string(4, 42, "Вай-Фай:", COLOR_WHITE, COLOR_BLACK);
+    
+    if (wifi_ok) {
+        wifi_ap_record_t ap_info;
+        int8_t rssi = 0;
+        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+            rssi = ap_info.rssi;
+        }
+        char wifi_str[16];
+        snprintf(wifi_str, sizeof(wifi_str), "%d дБм", rssi);
+        display_tft_draw_string(52, 42, wifi_str, COLOR_GREEN, COLOR_BLACK);
+    } else {
+        display_tft_draw_string(52, 42, "Нет связи", COLOR_RED, COLOR_BLACK);
+    }
 
+    // 3. Брокер MQTT
     bool mqtt_ok = mqtt_app_is_connected();
-    display_tft_draw_string(4, 80, "Брокер:", COLOR_WHITE, COLOR_BLACK);
-    display_tft_draw_string(52, 80, mqtt_ok ? "Работает" : "Нет связи", 
+    display_tft_draw_string(4, 62, "Брокер:", COLOR_WHITE, COLOR_BLACK);
+    display_tft_draw_string(52, 62, mqtt_ok ? "Работает" : "Нет связи", 
                             mqtt_ok ? COLOR_GREEN : COLOR_RED, COLOR_BLACK);
+
+    // 4. Модуль RTC DS3231
+    bool rtc_ok = system_state_is_rtc_ok();
+    display_tft_draw_string(4, 82, "ДС3231:", COLOR_WHITE, COLOR_BLACK);
+    display_tft_draw_string(52, 82, rtc_ok ? "Работает" : "Нет связи", 
+                            rtc_ok ? COLOR_GREEN : COLOR_RED, COLOR_BLACK);
 
     display_tft_draw_string(8, 140, "Нажми для выхода", COLOR_DARKGRAY, COLOR_BLACK);
 }

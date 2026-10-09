@@ -38,4 +38,9 @@ void display_tft_fill_screen(uint16_t color);
 void display_tft_fill_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
 void display_tft_draw_string(int16_t x, int16_t y, const char *str, uint16_t color, uint16_t bg_color);
 
+/**
+ * @brief Отобразить QR-код с заголовком на экрах TFT
+ */
+void display_tft_show_qr_payload(const char *payload, const char *title);
+
 #endif // DISPLAY_TFT_H
