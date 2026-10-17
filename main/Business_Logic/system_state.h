@@ -24,5 +24,6 @@ bool system_state_is_relay_active(void);
 void system_state_init_sntp(void);
 void system_state_handle_mqtt_cmd(const char *topic, int topic_len, const char *data, int data_len);
 bool system_state_is_rtc_ok(void);
+void system_state_test_light(void);
 
 #endif // SYSTEM_STATE_H

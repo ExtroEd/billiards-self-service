@@ -5,6 +5,7 @@
 #include "Peripheral/display_tft.h"
 #include "Peripheral/display_7seg.h"
 #include "Peripheral/ds3231.h"
+#include "Peripheral/ky_006.h"
 
 #include <stdio.h>
 #include <time.h>
@@ -21,14 +22,8 @@
 #include "nvs.h"
 #include "esp_sntp.h"
 
-#define MAX_OFFLINE_SECONDS (2 * 3600) // 2 часа = 7200 секунд
-
 #ifndef MIN_VALID_TIMESTAMP
 #define MIN_VALID_TIMESTAMP 1704067200LL
-#endif
-
-#ifndef MAX_OFFLINE_SECONDS
-#define MAX_OFFLINE_SECONDS 7200LL
 #endif
 
 static const char *TAG_SYS = "SYSTEM_STATE";
@@ -40,6 +35,7 @@ static int g_price_per_1hour = 180;
 static int32_t g_total_money = 0;      
 static int g_remaining_seconds = 0;
 static bool g_relay_state = false;
+static bool s_warning_played = false;
 
 static i2c_master_dev_handle_t s_ds3231_dev = NULL;
 static SemaphoreHandle_t g_state_mutex = NULL;
@@ -110,6 +106,7 @@ static void update_relay_state_unlocked(void) {
             g_relay_state = false;
             g_balance = 0;
             g_remaining_seconds = 0;
+            s_warning_played = false;
             if (s_ds3231_dev) {
                 ds3231_write_rem_seconds(s_ds3231_dev, 0);
             }
@@ -151,6 +148,13 @@ static void timer_countdown_task(void *pvParameters) {
 
                 if (g_relay_state && g_remaining_seconds > 0) {
                     g_remaining_seconds--;
+
+                    // 🔔 ЕСЛИ ОСТАЛОСЬ РОВНО 60 СЕКУНД (1 МИНУТА) - ИГРАЕМ МЕЛОДИЮ
+                    if (g_remaining_seconds == 60) {
+                        s_warning_played = true;
+                        ky_006_play_warning_melody();
+                        ESP_LOGI(TAG_SYS, "⏰ Осталась 1 минута до конца сессии. Звучит предупреждение.");
+                    }
 
                     if (s_ds3231_dev) {
                         ds3231_write_rem_seconds(s_ds3231_dev, (int32_t)g_remaining_seconds);
@@ -203,6 +207,7 @@ void system_state_init(i2c_master_dev_handle_t ds3231_dev) {
     gpio_set_level(RELAY_GPIO_PIN, 0);
 
     display_7seg_init();
+    ky_006_init();
 
     setenv("TZ", "KGT-6", 1);
     tzset();
@@ -216,22 +221,18 @@ void system_state_init(i2c_master_dev_handle_t ds3231_dev) {
     if (s_ds3231_dev &&
         ds3231_read_rem_seconds(s_ds3231_dev, &saved_secs) == ESP_OK && saved_secs > 0) 
     {
-        bool should_restore = true;
+        bool should_restore = true; // По умолчанию разрешаем восстановление
 
         if (ds3231_read_last_timestamp(s_ds3231_dev, &last_ts) == ESP_OK &&
             ds3231_get_time(s_ds3231_dev, &now_ts) == ESP_OK) 
         {
+            // Проверяем разницу только если обе метки адекватные
             if (last_ts >= MIN_VALID_TIMESTAMP && now_ts >= MIN_VALID_TIMESTAMP) {
                 int64_t offline_duration = now_ts - last_ts;
                 ESP_LOGI(TAG_SYS, "Проверка времени простоя: прошлый=%lld, сейчас=%lld, пропущено=%lld сек.", 
                         last_ts, now_ts, offline_duration);
-
-                if (offline_duration < 0 || offline_duration > MAX_OFFLINE_SECONDS) {
-                    ESP_LOGW(TAG_SYS, "⚠️ Питание было отключено слишком долго (%lld сек.)! Сброс.", offline_duration);
-                    should_restore = false;
-                }
             } else {
-                ESP_LOGW(TAG_SYS, "⚠️ Время RTC еще не синхронизировано (last=%lld, now=%lld). Доверяем сохраненным секундам.", last_ts, now_ts);
+                ESP_LOGW(TAG_SYS, "⚠️ Метки времени RTC еще не синхронизированы с NTP. Доверяем текущему остатку сессии.");
             }
         }
 
@@ -245,6 +246,7 @@ void system_state_init(i2c_master_dev_handle_t ds3231_dev) {
             g_relay_state = false;
             gpio_set_level(RELAY_GPIO_PIN, 0);
             ds3231_write_rem_seconds(s_ds3231_dev, 0);
+            ds3231_write_last_timestamp(s_ds3231_dev, 0);
         }
     }
 
@@ -293,6 +295,7 @@ void system_state_reset_balance(void) {
     if (xSemaphoreTake(g_state_mutex, portMAX_DELAY) == pdTRUE) {
         g_balance = 0;
         g_remaining_seconds = 0;
+        s_warning_played = false;
         if (s_ds3231_dev) {
             ds3231_write_rem_seconds(s_ds3231_dev, 0);
         }
@@ -400,4 +403,27 @@ bool system_state_is_rtc_ok(void) {
 
 void system_state_handle_mqtt_cmd(const char *topic, int topic_len, const char *data, int data_len) {
     cmd_handler_handle_mqtt_cmd(topic, topic_len, data, data_len);
+}
+
+void system_state_test_light(void) {
+    if (xSemaphoreTake(g_state_mutex, portMAX_DELAY) == pdTRUE) {
+        // Устанавливаем ровно 60 секунд (1 минута)
+        g_remaining_seconds = 60;
+        
+        if (!g_relay_state) {
+            g_relay_state = true;
+            gpio_set_level(RELAY_GPIO_PIN, 1);
+            ESP_LOGI(TAG_SYS, "⚡ ТЕСТОВЫЙ ЗАПУСК! Свет включен на 60 секунд.");
+        }
+
+        if (s_ds3231_dev) {
+            ds3231_write_rem_seconds(s_ds3231_dev, (int32_t)g_remaining_seconds);
+            int64_t current_ts = 0;
+            if (ds3231_get_time(s_ds3231_dev, &current_ts) == ESP_OK) {
+                ds3231_write_last_timestamp(s_ds3231_dev, current_ts);
+            }
+        }
+        xSemaphoreGive(g_state_mutex);
+    }
+    display_tft_wake();
 }

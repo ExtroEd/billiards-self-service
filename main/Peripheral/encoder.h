@@ -18,7 +18,7 @@ typedef enum {
 // Правильное назначение GPIO:
 #define ENCODER_CLK_PIN    GPIO_NUM_19
 #define ENCODER_DT_PIN     GPIO_NUM_16
-#define ENCODER_SW_PIN     GPIO_NUM_25
+#define ENCODER_SW_PIN     GPIO_NUM_34
 
 /**
  * @brief Инициализация GPIO и прерываний для энкодера KY-040

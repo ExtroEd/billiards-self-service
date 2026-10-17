@@ -12,6 +12,7 @@ idf_component_register(
         "Peripheral/ds3231.c"
         "Peripheral/encoder.c"
         "Peripheral/qr_code.c"
+        "Peripheral/ky_006.c"
         "UI/font5x7.c"
         "UI/ui_menu.c"
     INCLUDE_DIRS 
@@ -31,6 +32,7 @@ idf_component_register(
         esp_http_client
         esp_http_server 
         esp_driver_gpio
+        esp_driver_ledc
         esp_driver_spi
         esp_driver_i2c
         nvs_flash 

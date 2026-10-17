@@ -95,6 +95,19 @@ static void mqtt_cmd_worker_task(void *pvParameters) {
                             }
                         }
                     }
+                    // 7. Тестовое включение света на 1 минуту без оплаты
+                    else if (strcmp(evt, "TEST_LIGHT") == 0) {
+                        system_state_test_light();
+                        ESP_LOGW(TAG_CMD, "Выполнен тестовый запуск света на 60 сек!");
+
+                        cJSON *req_by = cJSON_GetObjectItem(root, "requestedBy");
+                        if (req_by && cJSON_IsString(req_by)) {
+                            char msg_buf[128];
+                            snprintf(msg_buf, sizeof(msg_buf),
+                                     "⚡ <b>Стол №%d:</b> Свет включен в тестовом режиме на 1 минуту.", TABLE_NUMBER);
+                            tg_bot_send_text(req_by->valuestring, msg_buf);
+                        }
+                    }
                 }
                 cJSON_Delete(root);
             }
@@ -105,7 +118,7 @@ static void mqtt_cmd_worker_task(void *pvParameters) {
 void cmd_handler_init(void) {
     if (s_mqtt_cmd_queue == NULL) {
         s_mqtt_cmd_queue = xQueueCreate(5, sizeof(mqtt_cmd_msg_t));
-        xTaskCreate(mqtt_cmd_worker_task, "mqtt_cmd_worker", 4096, NULL, 4, NULL);
+        xTaskCreate(mqtt_cmd_worker_task, "mqtt_cmd_worker", 6144, NULL, 4, NULL);
     }
 }
 
