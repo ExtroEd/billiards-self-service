@@ -102,6 +102,7 @@ static void update_relay_state_unlocked(void) {
             ESP_LOGI(TAG_SYS, "РЕЛЕ ВКЛЮЧЕНО! Оставшееся время: %d сек.", g_remaining_seconds);
         }
     } else {
+        // Внутри update_relay_state_unlocked() при выключении реле по окончании времени:
         if (g_relay_state) {
             g_relay_state = false;
             g_balance = 0;
@@ -112,6 +113,11 @@ static void update_relay_state_unlocked(void) {
             }
             gpio_set_level(RELAY_GPIO_PIN, 0);
             ESP_LOGW(TAG_SYS, "Время истекло. РЕЛЕ ВЫКЛЮЧЕНО!");
+
+            // Отправляем в MQTT статус успешного завершения сессии
+            char payload[64];
+            snprintf(payload, sizeof(payload), "{\"event\":\"SESSION_EXPIRED\",\"tableNum\":%d}", TABLE_NUMBER);
+            mqtt_app_publish_status(payload); // или отправка в статус-топик стола
         }
     }
 }

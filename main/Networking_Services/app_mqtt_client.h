@@ -10,10 +10,17 @@
 #define MQTT_USER           SECRET_MQTT_USER
 #define MQTT_PASS           SECRET_MQTT_PASS
 
-// Топики управления и телеметрии
-#define TABLE_ID 4
-#define MQTT_TOPIC_CMD    "billiards/klubnyy15_table4/cmd"
-#define MQTT_TOPIC_STATUS "billiards/klubnyy15_table4/status"
+// Динамические макросы топиков на основе TABLE_NUMBER из secrets.h
+// Используем функцию макроподстановки через строковые литералы C
+#define _STRINGIFY(x) #x
+#define _TOSTRING(x) _STRINGIFY(x)
+
+// Или формируем топики динамически прямо при публикации / подписке, 
+// но для совместимости зададим базовые через функции или строковые шаблоны.
+// Лучше всего формировать топик в самом коде отправки (app_mqtt_client.c), 
+// но для старых дефайнов сделаем так:
+
+#define TABLE_ID TABLE_NUMBER
 
 /**
  * @brief Инициализация и запуск MQTT клиента

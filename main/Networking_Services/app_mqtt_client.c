@@ -24,7 +24,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 
         // 1. Динамическая личная подписка стола (например: billiards/klubnyy15_table4/cmd)
         char personal_cmd_topic[64];
-        snprintf(personal_cmd_topic, sizeof(personal_cmd_topic), "billiards/klubnyy15_table%d/cmd", TABLE_NUMBER);
+        snprintf(personal_cmd_topic, sizeof(personal_cmd_topic), "billiards/%s_table%d/cmd", CLUB_PREFIX, TABLE_NUMBER);
         esp_mqtt_client_subscribe(s_client, personal_cmd_topic, 1);
         
         // 2. Общая подписка для всех столов
@@ -92,19 +92,22 @@ bool mqtt_app_is_connected(void)
     return s_is_connected;
 }
 
-esp_err_t mqtt_app_publish_status(const char *payload)
-{
+esp_err_t mqtt_app_publish_status(const char *payload) {
     if (!s_is_connected || s_client == NULL) {
         ESP_LOGW(TAG, "Невозможно отправить данные: нет подключения");
         return ESP_ERR_INVALID_STATE;
     }
 
-    int msg_id = esp_mqtt_client_publish(s_client, MQTT_TOPIC_STATUS, payload, 0, 1, 0);
+    // Динамически формируем правильный топик для текущего стола (например, billiards/klubnyy15_table1/status)
+    char status_topic[64];
+    snprintf(status_topic, sizeof(status_topic), "billiards/%s_table%d/status", CLUB_PREFIX, TABLE_NUMBER);
+
+    int msg_id = esp_mqtt_client_publish(s_client, status_topic, payload, 0, 1, 0);
     if (msg_id < 0) {
         ESP_LOGE(TAG, "Ошибка публикации сообщения");
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "Сообщение отправлено в %s, msg_id=%d", MQTT_TOPIC_STATUS, msg_id);
+    ESP_LOGI(TAG, "Сообщение успешно отправлено в %s, msg_id=%d", status_topic, msg_id);
     return ESP_OK;
 }
