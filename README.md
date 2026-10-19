@@ -1,8 +1,3 @@
-Конечно! Я составил профессиональный, структурированный и «напичканный» в хорошем смысле слова `README.md` на английском языке. Он отлично подойдет для портфолио, наглядно покажет вашу архитектуру, стек технологий и уровень владения как микроконтроллерами, так и облачными решениями.
-
-Вот готовый текст, который вы можете сразу скопировать в ваш файл `README.md`:
-
-```markdown
 # 🎱 IoT Billiards Club Management System
 
 <div align="center">
@@ -135,7 +130,3 @@ idf.py -p PORT flash monitor
 ## 📄 License
 
 This project is open-source and available under the [GNU GPLv3 License](https://www.google.com/search?q=LICENSE).
-
-```
-
-```
