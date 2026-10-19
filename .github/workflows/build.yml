@@ -8,21 +8,28 @@ on:
 
 jobs:
   build:
-  # Используем стабильный ubuntu-22.04, чтобы избежать проблем с новыми версиями раннеров
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git wget flex bison gperf python3 python3-pip python3-venv cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0
+
       - name: Set up ESP-IDF
-        uses: espressif/esp-idf-install-action@v8
-        with:
-          esp_idf_version: v5.3.1
-          target: esp32
+        run: |
+          mkdir -p ~/esp
+          cd ~/esp
+          git clone -b v5.3.1 --recursive https://github.com/espressif/esp-idf.git
+          cd esp-idf
+          ./install.sh esp32
 
       - name: Build Firmware
         shell: bash
         run: |
+          . ~/esp/esp-idf/export.sh
           idf.py set-target esp32
           idf.py build
           
