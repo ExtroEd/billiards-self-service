@@ -11,13 +11,19 @@ static const char *TAG = "KY_006";
 #define LEDC_MODE               LEDC_LOW_SPEED_MODE
 #define LEDC_CHANNEL            LEDC_CHANNEL_7
 #define LEDC_DUTY_RES           LEDC_TIMER_13_BIT 
-#define LEDC_DUTY               (250)             // Немного увеличили громкость для заметности предупреждения
+#define LEDC_DUTY               (250)             // Громкость
 #define LEDC_FREQUENCY          (1000)            
 
-#define NOTE_E5  659
+// Расширенный набор нот для киберпанк-мотива
+#define NOTE_C5  523
+#define NOTE_Eb5 622
+#define NOTE_F5  698
 #define NOTE_G5  784
+#define NOTE_Bb5 932
 #define NOTE_C6  1046
-#define NOTE_D6  1175
+#define NOTE_Eb6 1244
+#define NOTE_F6  1397
+#define NOTE_G6  1568
 
 typedef struct {
     uint16_t freq;
@@ -50,17 +56,31 @@ static void buzzer_task(void *pvParameters) {
     };
     ledc_channel_config(&ledc_channel);
 
-    // Более длинная и заметная тревожная мелодия (сигнал предупреждения)
+    // Длинная, тревожная киберпанк-мелодия (быстрые цифровые переливы)
     note_t melody[] = {
-        {NOTE_C6, 120},
-        {0,       60 },
-        {NOTE_G5, 120},
-        {0,       60 },
-        {NOTE_C6, 120},
-        {0,       80 },
-        {NOTE_D6, 200},
-        {0,       100},
-        {NOTE_C6, 300},
+        {NOTE_C5,  90},
+        {NOTE_G5,  90},
+        {NOTE_Bb5, 90},
+        {NOTE_C6,  120},
+        {0,        50 },
+        {NOTE_Eb6, 90},
+        {NOTE_C6,  90},
+        {NOTE_G5,  90},
+        {NOTE_F5,  120},
+        {0,        50 },
+        {NOTE_C5,  90},
+        {NOTE_Eb5, 90},
+        {NOTE_G5,  90},
+        {NOTE_Bb5, 120},
+        {0,        50 },
+        {NOTE_F6,  150},
+        {NOTE_Eb6, 100},
+        {NOTE_C6,  250},
+        {0,        100},
+        // Финал тревожного паттерна
+        {NOTE_G6,  180},
+        {NOTE_Eb6, 180},
+        {NOTE_C6,  350}
     };
 
     int len = sizeof(melody) / sizeof(melody[0]);
