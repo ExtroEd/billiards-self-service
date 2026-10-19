@@ -9,14 +9,16 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v6.1.0
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build ESP-IDF Project
-        uses: espressif/esp-idf-ci-action@v1
-        with:
-          esp_idf_version: v6.1.0
-          target: esp32
-          path: '.'
+      - name: Build Firmware
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py set-target esp32
+          idf.py build
           
