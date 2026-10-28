@@ -5,12 +5,17 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+// Подключаем заголовки для проверки статусов системы, Wi-Fi, MQTT и RTC
+#include "Networking_Services/wifi_app.h"
+#include "Networking_Services/app_mqtt_client.h"
+#include "system_state.h"
+
 static const char *TAG = "DISPLAY_TFT";
 static spi_device_handle_t s_spi_dev = NULL;
 
 static bool s_is_awake = true;
-static int64_t s_last_activity_time = 0;
-#define SLEEP_TIMEOUT_US (60 * 1000 * 1000LL) // 60 сек
+static int64_t s_boot_time = 0; // Время старта устройства
+#define BOOT_WINDOW_US (2LL * 60 * 1000 * 1000) // Первые 2 минуты в микросекундах
 
 #define ST7735_OFFSET_X  2
 #define ST7735_OFFSET_Y  1
@@ -85,21 +90,39 @@ void display_tft_set_backlight(bool enable) {
 }
 
 void display_tft_wake(void) {
-    s_last_activity_time = esp_timer_get_time();
     if (!s_is_awake) {
         display_tft_set_backlight(true);
     }
 }
 
 void display_tft_sleep(void) {
-    display_tft_set_backlight(false);
+    if (s_is_awake) {
+        display_tft_set_backlight(false);
+    }
 }
 
 void display_tft_tick(void) {
-    if (s_is_awake) {
-        if (esp_timer_get_time() - s_last_activity_time > SLEEP_TIMEOUT_US) {
-            display_tft_sleep();
-        }
+    int64_t current_time = esp_timer_get_time();
+
+    // Условие 1: Первые 2 минуты после включения устройства
+    bool is_boot_period = (current_time - s_boot_time < BOOT_WINDOW_US);
+
+    // Условие 2: Есть проблемы со связью (нет Wi-Fi, ошибка DS3231 или нет связи с брокером)
+    bool wifi_error = !wifi_app_is_connected();
+    bool rtc_error = !system_state_is_rtc_ok();
+    bool mqtt_error = !mqtt_app_is_connected();
+    bool has_any_error = (wifi_error || rtc_error || mqtt_error);
+
+    // Условие 3: Реле включено
+    bool is_relay_on = system_state_is_relay_active();
+
+    // Дисплей должен гореть, если выполняется хотя бы одно из условий
+    bool should_be_on = is_boot_period || has_any_error || is_relay_on;
+
+    if (should_be_on) {
+        display_tft_wake();
+    } else {
+        display_tft_sleep();
     }
 }
 
@@ -218,7 +241,7 @@ void display_tft_init(void) {
     display_tft_send_data(&colmod, 1);
     display_tft_send_cmd(0x29); // DISPON
 
+    s_boot_time = esp_timer_get_time(); // Запоминаем время старта
     display_tft_set_backlight(true);
-    s_last_activity_time = esp_timer_get_time();
     ESP_LOGI(TAG, "ST7735 driver initialized successfully.");
 }

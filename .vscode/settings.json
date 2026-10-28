@@ -23,10 +23,16 @@
   "clangd.arguments": [
     "--background-index",
     "--query-driver=**",
-    "--compile-commands-dir=e:\\Programming\\Visual_Studio_Projects\\billard\\Billards\\build"
+    "--compile-commands-dir=e:\\Programming\\VisualStudioProjects\\Billards\\build"
   ],
-  "idf.customExtraVars": {},
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32"
+  },
   "idf.flashType": "UART",
   "idf.currentSetup": "E:\\Programming\\esp\\.espressif\\v6.1\\esp-idf",
-  "idf.port": "COM4"
+  "idf.port": "COM4",
+  "idf.openOcdConfigs": [
+    "interface/ftdi/esp_ftdi.cfg",
+    "target/esp32.cfg"
+  ]
 }

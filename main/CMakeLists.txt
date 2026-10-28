@@ -6,12 +6,9 @@ idf_component_register(
         "Networking_Services/app_mqtt_client.c"
         "Networking_Services/tg_bot.c"
         "Networking_Services/wifi_app.c"
-        "Networking_Services/web_server_app.c"
         "Peripheral/display_7seg.c"
         "Peripheral/display_tft.c"
         "Peripheral/ds3231.c"
-        "Peripheral/encoder.c"
-        "Peripheral/qr_code.c"
         "Peripheral/ky_006.c"
         "UI/font5x7.c"
         "UI/ui_menu.c"
@@ -21,8 +18,6 @@ idf_component_register(
         "Networking_Services"
         "Peripheral"
         "UI"
-    EMBED_FILES
-        "web/index.html"
     REQUIRES 
         cjson
         esp-tls
@@ -30,13 +25,11 @@ idf_component_register(
         esp_wifi 
         esp_timer
         esp_http_client
-        esp_http_server 
         esp_driver_gpio
         esp_driver_ledc
         esp_driver_spi
         esp_driver_i2c
         nvs_flash 
         driver
-        qrcode
         mqtt
 )
